@@ -1,21 +1,13 @@
-package plugin
+package main
 
 import (
 	"errors"
 	"net"
 
 	"github.com/docker/libnetwork/netutils"
-	"github.com/vishvananda/netlink"
 )
 
 // utils
-
-func vethPair(suffix string) *netlink.Veth {
-	return &netlink.Veth{
-		LinkAttrs: netlink.LinkAttrs{Name: "vethwl" + suffix},
-		PeerName:  "vethwg" + suffix,
-	}
-}
 
 func makeMac(ip net.IP) string {
 	hw := make(net.HardwareAddr, 6)
