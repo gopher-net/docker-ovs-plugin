@@ -1,0 +1,12 @@
+plugin:
+  build: .
+  volumes:
+    - /usr/share/docker/plugins/ovs.sock:/usr/share/docker/plugins/ovs.sock
+    - /var/run/docker.sock:/var/run/docker.sock
+  net: host
+  privileged: true
+
+ovs:
+  image: socketplane/openvswitch:2.3.2
+  cap_add: NET_ADMIN
+  net: host
