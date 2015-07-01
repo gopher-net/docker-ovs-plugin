@@ -19,8 +19,9 @@ func main() {
 func Run(ctx *cli.Context) {
 
 	InitDefaultLogging(false)
-	var d driver.Driver
-	if d, err := driver.New(version); err != nil {
+	var d Driver
+	var err error
+	if d, err = driver.New(version); err != nil {
 		Error.Fatalf("unable to create driver: %s", err)
 	}
 

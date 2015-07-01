@@ -45,6 +45,7 @@ func init() {
 
 type Driver interface {
 	Listen(string) error
+//	New(version string) *Driver
 }
 
 type driver struct {
@@ -55,6 +56,11 @@ type driver struct {
 	network     string
 	cidr        *net.IPNet
 	nameserver  string
+}
+
+func (driver *driver) New(version string) *driver {
+	d := &driver{version}
+	return &d
 }
 
 func (driver *driver) Listen(socket string) error {
@@ -135,7 +141,7 @@ func (driver *driver) handshake(w http.ResponseWriter, r *http.Request) {
 }
 
 func (driver *driver) status(w http.ResponseWriter, r *http.Request) {
-	io.WriteString(w, fmt.Sprintln("weave plugin", driver.version))
+	io.WriteString(w, fmt.Sprintln("ovs plugin", driver.version))
 }
 
 type networkCreate struct {
@@ -161,7 +167,7 @@ func (driver *driver) createNetwork(w http.ResponseWriter, r *http.Request) {
 
 	// create the bridge
 	// todo: we should probably check if it exists first
-	if err := driver.ovsdber.createBridge(create.NetworkName, create.NetworkID); err != nil {
+	if err := driver.ovsdber.createBridge(driver.cidr, create.NetworkID); err != nil {
 		errorResponsef(w, "Unable to create bridge for network")
 		return
 	}
@@ -173,7 +179,7 @@ func (driver *driver) createNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 
 	driver.cidr = cidr
-	driver.ipallocator.RequestIP(cidr, nil)
+	driver.ipAllocator.RequestIP(cidr, nil)
 
 	emptyResponse(w)
 	Info.Printf("Create network %s", driver.network)
@@ -236,7 +242,7 @@ func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip, err := driver.ipallocator.RequestIP(network.cidr)
+	ip, err := driver.ipAllocator.RequestIP(driver.cidr)
 	if err != nil {
 		errorResponsef(w, "%s", err)
 	}
@@ -269,7 +275,7 @@ func (driver *driver) deleteEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	Debug.Printf("Delete endpoint request: %+v", &delete)
 	emptyResponse(w)
-	if err := driver.ipallocator.ReleaseIP(network.cidr, delete.EndpointID); err != nil {
+	if err := driver.ipAllocator.ReleaseIP(driver.cidr, delete.EndpointID); err != nil {
 		Warning.Printf("error releasing IP: %s", err)
 	}
 	Info.Printf("Delete endpoint %s", delete.EndpointID)

@@ -54,6 +54,7 @@ func (ovsdber *ovsdber) createBridge(ovs *libovsdb.OvsdbClient, bridgeName strin
 	if ok {
 		fmt.Println("Bridge Addition Successful : ", reply[0].UUID.GoUuid)
 	}
+	return
 }
 
 func New(version string) (Driver, error) {
