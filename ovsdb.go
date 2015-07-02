@@ -2,11 +2,17 @@ package main
 
 import (
 	"fmt"
+	//	"errors"
+	//	"reflect"
 
 	"github.com/docker/libnetwork/ipallocator"
 	"github.com/samalba/dockerclient"
 	"github.com/socketplane/libovsdb"
 )
+
+var quit chan bool
+var update chan *libovsdb.TableUpdates
+var cache map[string]map[string]libovsdb.Row
 
 type ovsdber struct {
 	client *libovsdb.OvsdbClient
@@ -23,6 +29,7 @@ func (ovsdber *ovsdber) createBridge(ovs *libovsdb.OvsdbClient, bridgeName strin
 		Row:   bridge,
 	}
 
+	namedUuid := "whales"
 	mutateUuid := []libovsdb.UUID{libovsdb.UUID{namedUuid}}
 	mutateSet, _ := libovsdb.NewOvsSet(mutateUuid)
 	mutation := libovsdb.NewMutation("bridges", "insert", mutateSet)
@@ -54,7 +61,7 @@ func (ovsdber *ovsdber) createBridge(ovs *libovsdb.OvsdbClient, bridgeName strin
 	if ok {
 		fmt.Println("Bridge Addition Successful : ", reply[0].UUID.GoUuid)
 	}
-	return
+	return nil
 }
 
 func New(version string) (Driver, error) {
@@ -80,4 +87,11 @@ func New(version string) (Driver, error) {
 		ipAllocator: ipAllocator,
 		version:     version,
 	}, nil
+}
+
+func getRootUuid() string {
+	for uuid, _ := range cache["Open_vSwitch"] {
+		return uuid
+	}
+	return ""
 }

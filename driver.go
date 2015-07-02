@@ -45,7 +45,6 @@ func init() {
 
 type Driver interface {
 	Listen(string) error
-//	New(version string) *Driver
 }
 
 type driver struct {
@@ -56,11 +55,6 @@ type driver struct {
 	network     string
 	cidr        *net.IPNet
 	nameserver  string
-}
-
-func (driver *driver) New(version string) *driver {
-	d := &driver{version}
-	return &d
 }
 
 func (driver *driver) Listen(socket string) error {
@@ -175,7 +169,7 @@ func (driver *driver) createNetwork(w http.ResponseWriter, r *http.Request) {
 	// assign a subnet
 	cidr, err := findBridgeCIDR()
 	if err != nil {
-		errorResponse(w, "%s", err)
+		errorResponsef(w, "%s", err)
 	}
 
 	driver.cidr = cidr
@@ -242,13 +236,13 @@ func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip, err := driver.ipAllocator.RequestIP(driver.cidr)
+	ip, err := driver.ipAllocator.RequestIP(driver.cidr, driver.cidr.IP)
 	if err != nil {
 		errorResponsef(w, "%s", err)
 	}
 	Debug.Printf("Got IP from IPAM %s", ip.String())
 
-	mac := makeMac(ip.IP)
+	mac := makeMac(ip)
 
 	respIface := &iface{
 		Address:    ip.String(),
@@ -275,7 +269,8 @@ func (driver *driver) deleteEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	Debug.Printf("Delete endpoint request: %+v", &delete)
 	emptyResponse(w)
-	if err := driver.ipAllocator.ReleaseIP(driver.cidr, delete.EndpointID); err != nil {
+	// ReleaseIP releases an ip back to a network
+	if err := driver.ipAllocator.ReleaseIP(driver.cidr, driver.cidr.IP); err != nil {
 		Warning.Printf("error releasing IP: %s", err)
 	}
 	Info.Printf("Delete endpoint %s", delete.EndpointID)
@@ -338,8 +333,8 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	Debug.Printf("Join request: %+v", &j)
-
-	endID := j.EndpointID
+	// Temp comment to compile
+	//	endID := j.EndpointID
 
 	// todo: create port on ovs bridge
 	// local := vethPair(endID[:5])
@@ -350,7 +345,8 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 	// }
 
 	ifname := &iface{
-		SrcName: local.PeerName,
+		// Temp comment out in order to compile
+		//SrcName: local.PeerName,
 		// DstPrefix name should be the same as source name
 		DstPrefix: "ethwe",
 		ID:        0,

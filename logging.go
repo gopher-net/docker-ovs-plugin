@@ -15,6 +15,10 @@ var (
 	debugF  bool
 )
 
+const (
+	standardLogFlags = log.Ldate | log.Ltime | log.Lmicroseconds
+)
+
 func InitLogging(debugHandle io.Writer,
 	infoHandle io.Writer,
 	warningHandle io.Writer,
