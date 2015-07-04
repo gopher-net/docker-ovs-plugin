@@ -171,7 +171,8 @@ func (driver *driver) createNetwork(w http.ResponseWriter, r *http.Request) {
 	driver.ipAllocator.RequestIP(cidr, nil)
 
 	emptyResponse(w)
-	Info.Printf("Create network %s", driver.network)
+	// TODO: driver.network is null and throws error
+	// Info.Printf("Create network %s", driver.network)
 }
 
 type networkDelete struct {
@@ -221,6 +222,7 @@ func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	Debug.Printf("Create endpoint request %+v", &create)
+	// TODO: network is null and throws error
 	netID := create.NetworkID
 	endID := create.EndpointID
 
@@ -329,6 +331,7 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 	// Temp comment to compile
 	//	endID := j.EndpointID
 
+	driver.ovsdber.createOvsInternalPort(driver.network, defaultBridge, 0)
 	// todo: create port on ovs bridge
 	// local := vethPair(endID[:5])
 	// if err := netlink.LinkAdd(local); err != nil {

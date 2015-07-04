@@ -22,8 +22,8 @@ const (
 var (
 	quit         chan bool
 	update       chan *libovsdb.TableUpdates
-	cache        map[string]map[string]libovsdb.Row
-	ContextCache map[string]string
+	ovsdbCache   map[string]map[string]libovsdb.Row
+	contextCache map[string]string
 )
 
 type ovsdber struct {
@@ -52,7 +52,7 @@ func (ovsdber *ovsdber) createBridge(bridgeName string) error {
 
 	quit = make(chan bool)
 	update = make(chan *libovsdb.TableUpdates)
-	cache = make(map[string]map[string]libovsdb.Row)
+	ovsdbCache = make(map[string]map[string]libovsdb.Row)
 
 	// Register for ovsdb table notifications
 	var notifier OvsdbNotifier
@@ -61,7 +61,7 @@ func (ovsdber *ovsdber) createBridge(bridgeName string) error {
 	// Populate ovsdb cache for the default Open_vSwitch db
 	initCache, _ := ovsdber.ovsdb.MonitorAll("Open_vSwitch", "")
 	populateCache(*initCache)
-	ContextCache = make(map[string]string)
+	contextCache = make(map[string]string)
 	populateContextCache(ovsdber.ovsdb)
 
 	// async monitoring of the ovs bridge(s) for table updates
@@ -103,7 +103,7 @@ func populateContextCache(ovs *libovsdb.OvsdbClient) {
 	if ovs == nil {
 		return
 	}
-	tableCache := GetTableCache("Interface")
+	tableCache := getTableCache("Interface")
 	for _, row := range tableCache {
 		config, ok := row.Fields["other_config"]
 		ovsMap := config.(libovsdb.OvsMap)
@@ -111,14 +111,14 @@ func populateContextCache(ovs *libovsdb.OvsdbClient) {
 		if ok {
 			containerID, ok := otherConfig[contextKey]
 			if ok {
-				ContextCache[containerID.(string)] = otherConfig[contextValue].(string)
+				contextCache[containerID.(string)] = otherConfig[contextValue].(string)
 			}
 		}
 	}
 }
 
-func GetTableCache(tableName string) map[string]libovsdb.Row {
-	return cache[tableName]
+func getTableCache(tableName string) map[string]libovsdb.Row {
+	return ovsdbCache[tableName]
 }
 
 func (ovsdber *ovsdber) addBridge() error {
@@ -277,7 +277,7 @@ func (ovsdber *ovsdber) monitorDockerBridge(brName string) {
 }
 
 func getRootUUID() string {
-	for uuid := range cache["Open_vSwitch"] {
+	for uuid := range ovsdbCache["Open_vSwitch"] {
 		return uuid
 	}
 	return ""
@@ -285,16 +285,16 @@ func getRootUUID() string {
 
 func populateCache(updates libovsdb.TableUpdates) {
 	for table, tableUpdate := range updates.Updates {
-		if _, ok := cache[table]; !ok {
-			cache[table] = make(map[string]libovsdb.Row)
+		if _, ok := ovsdbCache[table]; !ok {
+			ovsdbCache[table] = make(map[string]libovsdb.Row)
 
 		}
 		for uuid, row := range tableUpdate.Rows {
 			empty := libovsdb.Row{}
 			if !reflect.DeepEqual(row.New, empty) {
-				cache[table][uuid] = row.New
+				ovsdbCache[table][uuid] = row.New
 			} else {
-				delete(cache[table], uuid)
+				delete(ovsdbCache[table], uuid)
 			}
 		}
 	}

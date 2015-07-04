@@ -37,7 +37,7 @@ $ wget -qO- https://experimental.docker.com/ | sh
 # Clone and start the plugin
 $ git clone https://github.com/dave-tucker/docker-ovs-plugin.git
 $ cd docker-ovs-plugin
-$ go run *.go
+$ go run *.go -d
 
 # Start the Docker daemon with the name of the plugin socket.
 # In this case it is ovs  (/usr/share/docker/plugins/ovs.sock) 
