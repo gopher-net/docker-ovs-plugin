@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/docker/libnetwork/ipallocator"
 	"github.com/docker/libnetwork/types"
 	"github.com/gorilla/mux"
@@ -116,8 +117,6 @@ func emptyResponse(w http.ResponseWriter) {
 	json.NewEncoder(w).Encode(map[string]string{})
 }
 
-// === protocol handlers
-
 type handshakeResp struct {
 	Implements []string
 }
@@ -131,7 +130,7 @@ func (driver *driver) handshake(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "encode error", http.StatusInternalServerError)
 		return
 	}
-	Info.Printf("Handshake completed")
+	log.Debug("Handshake completed")
 }
 
 func (driver *driver) status(w http.ResponseWriter, r *http.Request) {
@@ -150,22 +149,18 @@ func (driver *driver) createNetwork(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Unable to decode JSON payload: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	Debug.Printf("Create network request %+v", &create)
 
 	if driver.network != "" {
 		errorResponsef(w, "You get just one network, and you already made %s", driver.network)
 		return
 	}
-
 	driver.network = create.NetworkID
-
-	// create the bridge
-	// todo: we should probably check if it exists first
-	if err := driver.ovsdber.createBridge(driver.cidr, create.NetworkID); err != nil {
+	// create a bridge TODO: add cidr back in for IP
+	//if err := driver.ovsdber.createBridge(driver.cidr, create.NetworkID); err != nil {
+	if err := driver.ovsdber.createBridge(driver.network); err != nil {
 		errorResponsef(w, "Unable to create bridge for network")
 		return
 	}
-
 	// assign a subnet
 	cidr, err := findBridgeCIDR()
 	if err != nil {
@@ -195,9 +190,7 @@ func (driver *driver) deleteNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	driver.network = ""
-
 	// todo: remove the bridge
-
 	emptyResponse(w)
 	Info.Printf("Destroy network %s", delete.NetworkID)
 }
