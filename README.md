@@ -4,9 +4,11 @@ docker-ovs-plugin
 Still a WIP, lots to do...
 
 - [ ] network creation code
-- [ ] endpoint creation code
+- [x] ip allocation via libnetwork ipam code
+- [x] endpoint creation code
 - [ ] endpoint deletion code
-- [ ] endpoint veth pair creation
+- [ ] gateway/default route code
+- [x] endpoint veth pair creation
 - [ ] ovs flowmods for packet forwarding
 - [x] bridge creation
 - [x] ovsdb manager initializaiton
@@ -16,11 +18,17 @@ Still a WIP, lots to do...
 - [x] compose file to run the openvswitch + daemon
 - [ ] test it works!
 - [ ] code cleanup - still lots of unused code
+- [ ] determine what are defaults and handling restarts
 - [ ] readme with how-to and hat tip to weave (this was based on their plugin)
 
 
 ### Development
 
+### Caveats
+
+* To test using the flag `--default-network` it requires docker experimental.
+* Libnetwork currently appends an index to the container side iface. If OVS internal ports are renamed once it a namespace it breaks the port. We need to change this in Libnetwork. Something like a check for duplicates should satisfy the need for index appending.
+* Gateway isn't working. Makes me wonder if something is off with ovs ports.
 
 ### Dev notes to run the OVS plugin directly on the Docker host OS
 
@@ -46,7 +54,7 @@ $ systemctl stop docker (or depending on OS ver) /etc/init.d/docker stop
 
 # Start the service with the following options or add them to DOCKER_OPTS
 # in /etc/default/docker Start the daemon with the debug flag
-$ docker -d -D --default-network=ovs:foo
+$ docker -d -D --default-network=ovs:ovsbr-docker0
 
 # Run a container
 $ docker run -it --rm busybox

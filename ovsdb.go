@@ -13,10 +13,9 @@ import (
 )
 
 const (
-	localhost     = "127.0.0.1"
-	defaultBridge = "ovsbr-docker0"
-	contextKey    = "container_id"
-	contextValue  = "container_data"
+	localhost    = "127.0.0.1"
+	contextKey   = "container_id"
+	contextValue = "container_data"
 )
 
 var (
@@ -65,11 +64,11 @@ func (ovsdber *ovsdber) createBridge(bridgeName string) error {
 	populateContextCache(ovsdber.ovsdb)
 
 	// async monitoring of the ovs bridge(s) for table updates
-	go ovsdber.monitorDockerBridge(defaultBridge)
+	go ovsdber.monitorDockerBridge(bridgeName)
 	for getRootUUID() == "" {
 		time.Sleep(time.Second * 1)
 	}
-	err := ovsdber.addBridge()
+	err := ovsdber.addBridge(bridgeName)
 	if err != nil {
 		log.Errorf("%s", err)
 	}
@@ -121,21 +120,20 @@ func getTableCache(tableName string) map[string]libovsdb.Row {
 	return ovsdbCache[tableName]
 }
 
-func (ovsdber *ovsdber) addBridge() error {
+func (ovsdber *ovsdber) addBridge(bridgeName string) error {
 	if ovsdber.ovsdb == nil {
 		return errors.New("OVS not connected")
 	}
-
 	// If the bridge has been created, a port with the same name should exist
-	exists, err := ovsdber.portExists(defaultBridge)
+	exists, err := ovsdber.portExists(bridgeName)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		if err := ovsdber.createBridgeIface(defaultBridge); err != nil {
+		if err := ovsdber.createBridgeIface(bridgeName); err != nil {
 			return err
 		}
-		exists, err = ovsdber.portExists(defaultBridge)
+		exists, err = ovsdber.portExists(bridgeName)
 		if err != nil {
 			return err
 		}

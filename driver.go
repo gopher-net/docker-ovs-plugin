@@ -9,13 +9,16 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/libnetwork/ipallocator"
-	"github.com/docker/libnetwork/types"
 	"github.com/gorilla/mux"
+	"github.com/vishvananda/netlink"
+	"strconv"
 )
 
 const (
 	MethodReceiver = "NetworkDriver"
 	version        = "0.1"
+	defaultBridge  = "ovsbr-docker0"  // temp
+	defaultSubnet  = "172.18.40.1/24" // temp
 )
 
 var bridgeNetworks []*net.IPNet
@@ -91,12 +94,12 @@ func (driver *driver) Listen(socket string) error {
 }
 
 func notFound(w http.ResponseWriter, r *http.Request) {
-	Warning.Printf("[plugin] Not found: %+v", r)
+	log.Warnf("[plugin] Not found: %+v", r)
 	http.NotFound(w, r)
 }
 
 func sendError(w http.ResponseWriter, msg string, code int) {
-	Error.Printf("%d %s", code, msg)
+	log.Errorf("%d %s", code, msg)
 	http.Error(w, msg, code)
 }
 
@@ -126,7 +129,7 @@ func (driver *driver) handshake(w http.ResponseWriter, r *http.Request) {
 		[]string{"NetworkDriver"},
 	})
 	if err != nil {
-		Error.Fatal("handshake encode:", err)
+		log.Fatalf("handshake encode:", err)
 		sendError(w, "encode error", http.StatusInternalServerError)
 		return
 	}
@@ -155,24 +158,16 @@ func (driver *driver) createNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	driver.network = create.NetworkID
-	// create a bridge TODO: add cidr back in for IP
-	//if err := driver.ovsdber.createBridge(driver.cidr, create.NetworkID); err != nil {
-	if err := driver.ovsdber.createBridge(driver.network); err != nil {
-		errorResponsef(w, "Unable to create bridge for network")
-		return
-	}
-	// assign a subnet
-	cidr, err := findBridgeCIDR()
-	if err != nil {
-		errorResponsef(w, "%s", err)
-	}
 
+	_, ipNet, err := net.ParseCIDR(defaultSubnet)
+	if err != nil {
+		log.Warnf("Error parsing cidr from the default subnet: %s", err)
+	}
+	cidr := ipNet
 	driver.cidr = cidr
 	driver.ipAllocator.RequestIP(cidr, nil)
 
 	emptyResponse(w)
-	// TODO: driver.network is null and throws error
-	// Info.Printf("Create network %s", driver.network)
 }
 
 type networkDelete struct {
@@ -221,34 +216,43 @@ func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Unable to decode JSON payload: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	Debug.Printf("Create endpoint request %+v", &create)
-	// TODO: network is null and throws error
+
 	netID := create.NetworkID
 	endID := create.EndpointID
 
 	if netID != driver.network {
+		log.Info("60-driver-createNetwork driver")
 		errorResponsef(w, "No such network %s", netID)
 		return
 	}
 
-	ip, err := driver.ipAllocator.RequestIP(driver.cidr, driver.cidr.IP)
-	if err != nil {
+	// Request an IP address from libnetwork based on the cidr scope
+	// TODO: Add a user defined static ip addr option
+	allocatedIP, err := driver.ipAllocator.RequestIP(driver.cidr, nil)
+	if err != nil || allocatedIP == nil {
+		log.Errorf("Unable to obtain an IP address from libnetwork ipam: ", err)
 		errorResponsef(w, "%s", err)
+		return
 	}
-	Debug.Printf("Got IP from IPAM %s", ip.String())
 
-	mac := makeMac(ip)
+	mac := makeMac(allocatedIP)
+	// Have to convert container IP to a string ip/mask format
+	_, containerMask := driver.cidr.Mask.Size()
+	containerAddress := allocatedIP.String() + "/" + strconv.Itoa(containerMask)
+
+	log.Debugf("Dynamically allocated container IP is [ %s ]", allocatedIP.String())
 
 	respIface := &iface{
-		Address:    ip.String(),
+		Address:    containerAddress,
 		MacAddress: mac,
 	}
+
 	resp := &endpointResponse{
 		Interfaces: []*iface{respIface},
 	}
 
 	objectResponse(w, resp)
-	Info.Printf("Create endpoint %s %+v", endID, resp)
+	log.Infof("Create endpoint %s %+v", endID, resp)
 }
 
 type endpointDelete struct {
@@ -264,11 +268,12 @@ func (driver *driver) deleteEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	Debug.Printf("Delete endpoint request: %+v", &delete)
 	emptyResponse(w)
+
 	// ReleaseIP releases an ip back to a network
 	if err := driver.ipAllocator.ReleaseIP(driver.cidr, driver.cidr.IP); err != nil {
-		Warning.Printf("error releasing IP: %s", err)
+		log.Warnf("error releasing IP: %s", err)
 	}
-	Info.Printf("Delete endpoint %s", delete.EndpointID)
+	log.Infof("Delete endpoint %s", delete.EndpointID)
 }
 
 type endpointInfoReq struct {
@@ -286,9 +291,9 @@ func (driver *driver) infoEndpoint(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Could not decode JSON encode payload", http.StatusBadRequest)
 		return
 	}
-	Debug.Printf("Endpoint info request: %+v", &info)
+	log.Infof("Endpoint info request: %+v", &info)
 	objectResponse(w, &endpointInfo{Value: map[string]interface{}{}})
-	Info.Printf("Endpoint info %s", info.EndpointID)
+	log.Infof("Endpoint info %s", info.EndpointID)
 }
 
 type joinInfo struct {
@@ -327,44 +332,71 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Could not decode JSON encode payload", http.StatusBadRequest)
 		return
 	}
-	Debug.Printf("Join request: %+v", &j)
-	// Temp comment to compile
-	//	endID := j.EndpointID
+	log.Debugf("Join request: %+v", &j)
+	// If the bridge has been created, a port with the same name should exist
+	exists, err := driver.ovsdber.portExists(defaultBridge)
+	if err != nil {
+		log.Debugf("Port exists error: %s", err)
+	}
+	if !exists {
+		// If bridge does not exist create it
+		if err := driver.ovsdber.createBridge(defaultBridge); err != nil {
+			log.Warnf("error creating ovs bridge [ %s ] : [ %s ]", defaultBridge, err)
+		}
+	}
+	// Set bridge IP.
+	// TODO: check if exists to get rid of file exists log.
+	err = driver.setInterfaceIP(defaultBridge, defaultSubnet)
+	if err != nil {
+		log.Warnf("Error setting subnet: [ %s ] on bridge: [ %s ]  with an error of: %s", defaultSubnet, defaultBridge, err)
+	}
+	// Bring the bridge up
+	err = driver.ifaceUP(defaultBridge)
+	if err != nil {
+		log.Warnf("Error enabling  bridge IP: [ %s ]", err)
+	}
+	// Verify there is an IP on the bridge
+	brNet, err := GetIfaceAddr(defaultBridge)
+	if err != nil {
+		log.Warnf("No IP address found on bridge: [ %s ]: %s", defaultBridge, err)
+	} else {
+		log.Debugf("IP address [ %s ] found on bridge: [ %s ]", brNet, defaultBridge)
+	}
 
-	driver.ovsdber.createOvsInternalPort(driver.network, defaultBridge, 0)
-	// todo: create port on ovs bridge
-	// local := vethPair(endID[:5])
-	// if err := netlink.LinkAdd(local); err != nil {
-	//	Error.Print(err)
-	//	errorResponsef(w, "could not create veth pair")
-	//	return
-	// }
+	endID := j.EndpointID
+	// Create an OVS port that the container will use as its iface
+	portID, err := driver.ovsdber.createOvsInternalPort(endID[:5], defaultBridge, 0)
+	if err != nil {
+		log.Debugf("error creating OVS port [ %s ]", portID)
+		errorResponsef(w, "%s", err)
+	}
+	log.Debugf("Port ID is [ %s ]", portID)
 
 	ifname := &iface{
-		// Temp comment out in order to compile
-		//SrcName: local.PeerName,
-		// DstPrefix name should be the same as source name
-		DstPrefix: "ethwe",
+		SrcName:   portID,
+		DstPrefix: portID,
 		ID:        0,
 	}
 
+	// TODO: debug gateway failure
 	res := &joinResponse{
 		InterfaceNames: []*iface{ifname},
+		// Gateway: "172.18.40.1",
 	}
 
 	// todo: are we interested in the nameserver code?
-	if driver.nameserver != "" {
-		routeToDNS := &staticRoute{
-			Destination: driver.nameserver + "/32",
-			RouteType:   types.CONNECTED,
-			NextHop:     "",
-			InterfaceID: 0,
-		}
-		res.StaticRoutes = []*staticRoute{routeToDNS}
-	}
+	//	if driver.nameserver != "" {
+	//		routeToDNS := &staticRoute{
+	//			Destination: driver.nameserver + "/32",
+	//			RouteType:   types.CONNECTED,
+	//			NextHop:     "",
+	//			InterfaceID: 0,
+	//		}
+	//		res.StaticRoutes = []*staticRoute{routeToDNS}
+	//	}
 
 	objectResponse(w, res)
-	Info.Printf("Join endpoint %s:%s to %s", j.NetworkID, j.EndpointID, j.SandboxKey)
+	log.Infof("Join endpoint %s:%s to %s", j.NetworkID, j.EndpointID, j.SandboxKey)
 }
 
 type leave struct {
@@ -379,7 +411,7 @@ func (driver *driver) leaveEndpoint(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Could not decode JSON encode payload", http.StatusBadRequest)
 		return
 	}
-	Debug.Printf("Leave request: %+v", &l)
+	log.Debugf("Leave request: %+v", &l)
 
 	// todo: clean up interface
 	// local := vethPair(l.EndpointID[:5])
@@ -387,5 +419,46 @@ func (driver *driver) leaveEndpoint(w http.ResponseWriter, r *http.Request) {
 	// 	Warning.Printf("unable to delete veth on leave: %s", err)
 	// }
 	emptyResponse(w)
-	Info.Printf("Leave %s:%s", l.NetworkID, l.EndpointID)
+	log.Infof("Leave %s:%s", l.NetworkID, l.EndpointID)
+}
+
+// Return the IPv4 address of a network interface
+func GetIfaceAddr(name string) (*net.IPNet, error) {
+	iface, err := netlink.LinkByName(name)
+	if err != nil {
+		return nil, err
+	}
+	addrs, err := netlink.AddrList(iface, netlink.FAMILY_V4)
+	if err != nil {
+		return nil, err
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("Interface %v has no IP addresses", name)
+	}
+	if len(addrs) > 1 {
+		log.Infof("Interface [ %v ] has more than 1 IPv4 address. Defaulting to using [ %v ]\n", name, addrs[0].IP)
+	}
+	return addrs[0].IPNet, nil
+}
+
+func (driver *driver) setInterfaceIP(name string, rawIP string) error {
+	iface, err := netlink.LinkByName(name)
+	if err != nil {
+		return err
+	}
+
+	ipNet, err := netlink.ParseIPNet(rawIP)
+	if err != nil {
+		return err
+	}
+	addr := &netlink.Addr{ipNet, ""}
+	return netlink.AddrAdd(iface, addr)
+}
+
+func (driver *driver) ifaceUP(name string) error {
+	iface, err := netlink.LinkByName(name)
+	if err != nil {
+		return err
+	}
+	return netlink.LinkSetUp(iface)
 }
