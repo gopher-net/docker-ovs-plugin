@@ -3,14 +3,16 @@ package main
 import (
 	"errors"
 	"net"
-
-	"bytes"
-	"crypto/rand"
-	"encoding/hex"
-	"github.com/docker/libnetwork/netutils"
 	"io"
 	"io/ioutil"
 	"regexp"
+	"strings"
+	"bytes"
+	"crypto/rand"
+	"encoding/hex"
+
+	log "github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/netutils"
 )
 
 // utils
@@ -118,4 +120,45 @@ func generateRandomName(prefix string, size int) (string, error) {
 		return "", err
 	}
 	return prefix + hex.EncodeToString(id)[:size], nil
+}
+
+func getIfaceAddrStr(name string) (string, error) {
+	iface, err := net.InterfaceByName(name)
+	if err != nil {
+		return "", err
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return "", err
+	}
+	var addrs4 []net.Addr
+	for _, addr := range addrs {
+		ip := (addr.(*net.IPNet)).IP
+		if ip4 := ip.To4(); len(ip4) == net.IPv4len {
+			addrs4 = append(addrs4, addr)
+		}
+	}
+	switch {
+	case len(addrs4) == 0:
+		return "",  errors.New("interface has no IP addresses")
+	case len(addrs4) > 1:
+		log.Infof("Interface [ %s ] has more than 1 IPv4 address. Defaulting to IP [ %v ]\n", name, (addrs4[0].(*net.IPNet)).IP)
+	}
+	s := strings.Split(addrs4[0].String(), "/")
+	ip, _ := s[0], s[1]
+	return ip, err
+}
+
+func ipIncrement(networkAddr net.IP) net.IP {
+	for i := 15; i >= 0; i-- {
+		b := networkAddr[i]
+		if b < 255 {
+			networkAddr[i] = b + 1
+			for xi := i + 1; xi <= 15; xi++ {
+				networkAddr[xi] = 0
+			}
+			break
+		}
+	}
+	return networkAddr
 }

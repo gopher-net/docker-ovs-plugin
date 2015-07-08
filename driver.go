@@ -6,19 +6,23 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
+	"time"
+	"path"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/vishvananda/netns"
 	"github.com/docker/libnetwork/ipallocator"
 	"github.com/gorilla/mux"
 	"github.com/vishvananda/netlink"
-	"strconv"
 )
 
 const (
 	MethodReceiver = "NetworkDriver"
 	version        = "0.1"
 	defaultBridge  = "ovsbr-docker0"  // temp
-	defaultSubnet  = "172.18.40.1/24" // temp
+	defaultSubnet  = "172.18.40.0/24" // temp
+	defaultGateway  = "172.18.40.1/24" // temp
 )
 
 var bridgeNetworks []*net.IPNet
@@ -346,7 +350,7 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	// Set bridge IP.
 	// TODO: check if exists to get rid of file exists log.
-	err = driver.setInterfaceIP(defaultBridge, defaultSubnet)
+	err = driver.setInterfaceIP(defaultBridge, defaultGateway)
 	if err != nil {
 		log.Warnf("Error setting subnet: [ %s ] on bridge: [ %s ]  with an error of: %s", defaultSubnet, defaultBridge, err)
 	}
@@ -356,7 +360,7 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 		log.Warnf("Error enabling  bridge IP: [ %s ]", err)
 	}
 	// Verify there is an IP on the bridge
-	brNet, err := GetIfaceAddr(defaultBridge)
+	brNet, err := getIfaceAddr(defaultBridge)
 	if err != nil {
 		log.Warnf("No IP address found on bridge: [ %s ]: %s", defaultBridge, err)
 	} else {
@@ -378,7 +382,10 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 		ID:        0,
 	}
 
-	// TODO: debug gateway failure
+	// TODO: trying to set the GW fails with a dest unreachable
+	// Im guessing it is a timing issue of the internal OVS port
+	// move to the container netns. The connected and gateway routes
+	// are added via netlink directly from the plugin itself atm.
 	res := &joinResponse{
 		InterfaceNames: []*iface{ifname},
 		// Gateway: "172.18.40.1",
@@ -397,6 +404,9 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 
 	objectResponse(w, res)
 	log.Infof("Join endpoint %s:%s to %s", j.NetworkID, j.EndpointID, j.SandboxKey)
+	// get the nspid for post container route additions
+	_, nspid := path.Split(j.SandboxKey)
+	go driver.addRoutes(portID, nspid)
 }
 
 type leave struct {
@@ -423,7 +433,7 @@ func (driver *driver) leaveEndpoint(w http.ResponseWriter, r *http.Request) {
 }
 
 // Return the IPv4 address of a network interface
-func GetIfaceAddr(name string) (*net.IPNet, error) {
+func getIfaceAddr(name string) (*net.IPNet, error) {
 	iface, err := netlink.LinkByName(name)
 	if err != nil {
 		return nil, err
@@ -461,4 +471,91 @@ func (driver *driver) ifaceUP(name string) error {
 		return err
 	}
 	return netlink.LinkSetUp(iface)
+}
+
+// Add the local connected route for the container NS
+func (driver *driver) addRoutes(portID, nsPid string) {
+	time.Sleep(time.Second * 1)
+	dockerNsFd, err := netns.GetFromDocker(nsPid)
+	if err != nil {
+		log.Errorf("failed to get from docker  %s", err)
+	}
+
+	netns.Set(dockerNsFd)
+	err = setConnectedRoute(portID, dockerNsFd)
+	if err != nil {
+		log.Errorf("failed to set the connected route for iface [ %s ]: %s", portID, err)
+	}
+	// if the local connected network doesnt exist yet, the default route is rejected :/
+	time.Sleep(time.Second * 2)
+	err = setDefaultGateway(portID, dockerNsFd)
+	if err != nil {
+		log.Errorf("error while setting the default gateway: %s", err)
+	}
+}
+
+///////////////////////////////////////
+// Add the default gateway to the container NS if one exists.
+// Default to the OVS bridge it is attached to if it has an IP?
+func setConnectedRoute(ifaceName string, dockerNsFd netns.NsHandle) error {
+	iface, err := netlink.LinkByName(ifaceName)
+	if err != nil {
+		return err
+	}
+	// switch to container namespace
+	err = netns.Set(dockerNsFd)
+	if err != nil {
+		return err
+	}
+	_, dst, err := net.ParseCIDR(defaultSubnet)
+	if err != nil {
+		return err
+	}
+	log.Warnf("10- iface.Attrs().Index, ------> [ %d ]", iface.Attrs().Index)
+	connectedRoute := &netlink.Route{
+		LinkIndex: iface.Attrs().Index,
+		Dst:       dst,
+		//		Scope:     Scope,
+		//		Gw:        gw,
+	}
+	return netlink.RouteAdd(connectedRoute)
+}
+
+// Add the default gateway to the container NS if one exists.
+// Default to the OVS bridge it is attached to if it has an IP?
+func setDefaultGateway(ifaceName string, dockerNsFd netns.NsHandle) error {
+	iface, err := netlink.LinkByName(ifaceName)
+	if err != nil {
+		return err
+	}
+	gw, _, err := net.ParseCIDR(defaultGateway)
+	if err != nil {
+		return err
+	}
+
+	_, dst, err := net.ParseCIDR("0.0.0.0/0")
+	if err != nil {
+		return err
+	}
+	// switch to container namespace
+	err = netns.Set(dockerNsFd)
+	if err != nil {
+		return err
+	}
+	defaultRoute := &netlink.Route{
+		LinkIndex: iface.Attrs().Index,
+		Dst:       dst,
+		Gw:        gw,
+	}
+	return netlink.RouteAdd(defaultRoute)
+}
+
+func getIfaceIndex(name string) (int, error) {
+	iface, err := netlink.LinkByName(name)
+	if err != nil {
+		return -1, err
+	}
+	linkIndex := iface.Attrs().Index
+	log.Warnf("The link index for the port named [ %s ] is [ %s ]", name, linkIndex)
+	return linkIndex, nil
 }
