@@ -51,11 +51,6 @@ func getNameserversAsCIDR(resolvConf []byte) []string {
 
 func findBridgeCIDR() (*net.IPNet, error) {
 
-	// Use the requested IPv4 CIDR when available.
-	// if config.AddressIPv4 != nil {
-	//	return config.AddressIPv4, nil
-	// }
-
 	// We don't check for an error here, because we don't really care if we
 	// can't read /etc/resolv.conf. So instead we skip the append if resolvConf
 	// is nil. It either doesn't exist, or we can't read it for some reason.

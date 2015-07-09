@@ -6,23 +6,25 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path"
+	"runtime"
 	"strconv"
 	"time"
-	"path"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/vishvananda/netns"
 	"github.com/docker/libnetwork/ipallocator"
 	"github.com/gorilla/mux"
 	"github.com/vishvananda/netlink"
+	"github.com/vishvananda/netns"
 )
 
 const (
 	MethodReceiver = "NetworkDriver"
 	version        = "0.1"
-	defaultBridge  = "ovsbr-docker0"  // temp
-	defaultSubnet  = "172.18.40.0/24" // temp
-	defaultGateway  = "172.18.40.1/24" // temp
+	//	bridgeName = "ovsbr-docker0"  // temp
+	//	bridgeSubnet = "172.18.40.0/24" // temp
+	//	bridgeIP = "172.18.40.1/24" // temp
+	defaultRoute = "0.0.0.0/0"
 )
 
 var bridgeNetworks []*net.IPNet
@@ -53,6 +55,13 @@ func init() {
 
 type Driver interface {
 	Listen(string) error
+}
+
+// Struct for binding bridge options CLI flags
+type bridgeOpts struct {
+	brName string
+	brSubnet net.IPNet
+	brIP net.IPNet
 }
 
 type driver struct {
@@ -163,7 +172,7 @@ func (driver *driver) createNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 	driver.network = create.NetworkID
 
-	_, ipNet, err := net.ParseCIDR(defaultSubnet)
+	_, ipNet, err := net.ParseCIDR(bridgeSubnet)
 	if err != nil {
 		log.Warnf("Error parsing cidr from the default subnet: %s", err)
 	}
@@ -338,38 +347,38 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Debugf("Join request: %+v", &j)
 	// If the bridge has been created, a port with the same name should exist
-	exists, err := driver.ovsdber.portExists(defaultBridge)
+	exists, err := driver.ovsdber.portExists(bridgeName)
 	if err != nil {
 		log.Debugf("Port exists error: %s", err)
 	}
 	if !exists {
 		// If bridge does not exist create it
-		if err := driver.ovsdber.createBridge(defaultBridge); err != nil {
-			log.Warnf("error creating ovs bridge [ %s ] : [ %s ]", defaultBridge, err)
+		if err := driver.ovsdber.createBridge(bridgeName); err != nil {
+			log.Warnf("error creating ovs bridge [ %s ] : [ %s ]", bridgeName, err)
 		}
 	}
-	// Set bridge IP.
 	// TODO: check if exists to get rid of file exists log.
-	err = driver.setInterfaceIP(defaultBridge, defaultGateway)
+	// Set bridge IP.
+	err = driver.setInterfaceIP(bridgeName, bridgeIP)
 	if err != nil {
-		log.Warnf("Error setting subnet: [ %s ] on bridge: [ %s ]  with an error of: %s", defaultSubnet, defaultBridge, err)
+		log.Warnf("Error setting subnet: [ %s ] on bridge: [ %s ]  with an error of: %s", bridgeSubnet, bridgeName, err)
 	}
 	// Bring the bridge up
-	err = driver.ifaceUP(defaultBridge)
+	err = driver.ifaceUP(bridgeName)
 	if err != nil {
 		log.Warnf("Error enabling  bridge IP: [ %s ]", err)
 	}
 	// Verify there is an IP on the bridge
-	brNet, err := getIfaceAddr(defaultBridge)
+	brNet, err := getIfaceAddr(bridgeName)
 	if err != nil {
-		log.Warnf("No IP address found on bridge: [ %s ]: %s", defaultBridge, err)
+		log.Warnf("No IP address found on bridge: [ %s ]: %s", bridgeName, err)
 	} else {
-		log.Debugf("IP address [ %s ] found on bridge: [ %s ]", brNet, defaultBridge)
+		log.Debugf("IP address [ %s ] found on bridge: [ %s ]", brNet, bridgeName)
 	}
 
 	endID := j.EndpointID
 	// Create an OVS port that the container will use as its iface
-	portID, err := driver.ovsdber.createOvsInternalPort(endID[:5], defaultBridge, 0)
+	portID, err := driver.ovsdber.createOvsInternalPort(endID[:5], bridgeName, 0)
 	if err != nil {
 		log.Debugf("error creating OVS port [ %s ]", portID)
 		errorResponsef(w, "%s", err)
@@ -388,7 +397,7 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 	// are added via netlink directly from the plugin itself atm.
 	res := &joinResponse{
 		InterfaceNames: []*iface{ifname},
-		// Gateway: "172.18.40.1",
+		// Gateway: "not worky, setting df GW in methods below using netlink",
 	}
 
 	// todo: are we interested in the nameserver code?
@@ -422,7 +431,6 @@ func (driver *driver) leaveEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Debugf("Leave request: %+v", &l)
-
 	// todo: clean up interface
 	// local := vethPair(l.EndpointID[:5])
 	// if err := netlink.LinkDel(local); err != nil {
@@ -475,79 +483,78 @@ func (driver *driver) ifaceUP(name string) error {
 
 // Add the local connected route for the container NS
 func (driver *driver) addRoutes(portID, nsPid string) {
+	// if the local connected network doesnt exist yet, the gateway is rejected
+	// with a no route to gw. TODO: see why connected route isnt created by libnet
+	err := setConnectedRoute(portID, nsPid)
+	if err != nil {
+		log.Errorf("Errors encountered adding routes to the port [ %s ]: %s", portID, err)
+	}
+}
+
+// Add the default gateway to the container NS if one exists.
+// Default to the OVS bridge it is attached to if it has an IP?
+func setConnectedRoute(ifaceName string, nsPid string) error {
+	// Lock the OS thread
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	origns, err := netns.Get()
+	if err != nil {
+		return err
+	}
+	defer origns.Close()
 	time.Sleep(time.Second * 1)
 	dockerNsFd, err := netns.GetFromDocker(nsPid)
 	if err != nil {
-		log.Errorf("failed to get from docker  %s", err)
-	}
-
-	netns.Set(dockerNsFd)
-	err = setConnectedRoute(portID, dockerNsFd)
-	if err != nil {
-		log.Errorf("failed to set the connected route for iface [ %s ]: %s", portID, err)
-	}
-	// if the local connected network doesnt exist yet, the default route is rejected :/
-	time.Sleep(time.Second * 2)
-	err = setDefaultGateway(portID, dockerNsFd)
-	if err != nil {
-		log.Errorf("error while setting the default gateway: %s", err)
-	}
-}
-
-///////////////////////////////////////
-// Add the default gateway to the container NS if one exists.
-// Default to the OVS bridge it is attached to if it has an IP?
-func setConnectedRoute(ifaceName string, dockerNsFd netns.NsHandle) error {
-	iface, err := netlink.LinkByName(ifaceName)
-	if err != nil {
-		return err
+		log.Errorf("Failed to get the nspid from docker %s", err)
 	}
 	// switch to container namespace
 	err = netns.Set(dockerNsFd)
 	if err != nil {
 		return err
 	}
-	_, dst, err := net.ParseCIDR(defaultSubnet)
+	defer dockerNsFd.Close()
+	iface, err := netlink.LinkByName(ifaceName)
 	if err != nil {
 		return err
 	}
-	log.Warnf("10- iface.Attrs().Index, ------> [ %d ]", iface.Attrs().Index)
+	nwAddr, dst, err := net.ParseCIDR(bridgeSubnet)
+	if err != nil {
+		return err
+	}
+	// create a connected route for the interface. Something is squirrely.
 	connectedRoute := &netlink.Route{
 		LinkIndex: iface.Attrs().Index,
 		Dst:       dst,
-		//		Scope:     Scope,
-		//		Gw:        gw,
+		Scope:     netlink.SCOPE_UNIVERSE,
 	}
-	return netlink.RouteAdd(connectedRoute)
-}
-
-// Add the default gateway to the container NS if one exists.
-// Default to the OVS bridge it is attached to if it has an IP?
-func setDefaultGateway(ifaceName string, dockerNsFd netns.NsHandle) error {
-	iface, err := netlink.LinkByName(ifaceName)
+	log.Debugf("Adding conected route [ %+v ]", connectedRoute)
+	err = netlink.RouteAdd(connectedRoute)
+	if err != nil {
+		log.Errorf("Failed to add connected route [ %+v ]: %s", nwAddr, connectedRoute, err)
+		return err
+	}
+	_, dfDst, err := net.ParseCIDR(defaultRoute)
 	if err != nil {
 		return err
 	}
-	gw, _, err := net.ParseCIDR(defaultGateway)
+	gwRoutes, err := netlink.RouteGet(nwAddr)
 	if err != nil {
-		return err
+		return fmt.Errorf("Route for the gateway could not be found: %v", err)
 	}
-
-	_, dst, err := net.ParseCIDR("0.0.0.0/0")
-	if err != nil {
-		return err
-	}
-	// switch to container namespace
-	err = netns.Set(dockerNsFd)
-	if err != nil {
-		return err
-	}
+	// create a connected route for the interface (todoL netlink doesnt seem to take GW)
 	defaultRoute := &netlink.Route{
-		LinkIndex: iface.Attrs().Index,
-		Dst:       dst,
-		Gw:        gw,
+		LinkIndex: gwRoutes[0].LinkIndex,
+		Scope:     netlink.SCOPE_UNIVERSE,
+		Dst:       dfDst,
 	}
-	return netlink.RouteAdd(defaultRoute)
+	log.Debugf("Adding default route [ %+v ]", defaultRoute)
+	err = netlink.RouteAdd(defaultRoute)
+	if err != nil {
+		log.Errorf("Failed to set the default route [ %v ]: %s", defaultRoute, err)
+		return err
+	}
+
+	return nil
 }
 
 func getIfaceIndex(name string) (int, error) {
