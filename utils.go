@@ -1,15 +1,15 @@
 package main
 
 import (
-	"errors"
-	"net"
-	"io"
-	"io/ioutil"
-	"regexp"
-	"strings"
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"io"
+	"io/ioutil"
+	"net"
+	"regexp"
+	"strings"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/libnetwork/netutils"
@@ -135,7 +135,7 @@ func getIfaceAddrStr(name string) (string, error) {
 	}
 	switch {
 	case len(addrs4) == 0:
-		return "",  errors.New("interface has no IP addresses")
+		return "", errors.New("interface has no IP addresses")
 	case len(addrs4) > 1:
 		log.Infof("Interface [ %s ] has more than 1 IPv4 address. Defaulting to IP [ %v ]\n", name, (addrs4[0].(*net.IPNet)).IP)
 	}

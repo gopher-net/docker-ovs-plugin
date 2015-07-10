@@ -6,7 +6,7 @@ Still a WIP, lots to do...
 - [x] network creation code
 - [x] ip allocation via libnetwork ipam code
 - [x] endpoint creation code
-- [ ] endpoint deletion code
+- [x] endpoint deletion code
 - [ ] determine CLI opts and binding of the values to Driver
 - [x] gateway/default route code
 - [x] need to deter
@@ -22,14 +22,6 @@ Still a WIP, lots to do...
 - [ ] code cleanup - still lots of unused code
 - [ ] restart handling issues
 - [ ] readme with how-to and hat tip to weave (this was based on their plugin)
-
-
-### Caveats
-
-* To test using the flag `--default-network` it requires docker experimental.
-* OVS bridge name, bridge IP, container subnet are all hardcoded currently. We need to bind them to `Driver` via flag opts. Added a `brOpts` struct we could modify the `Driver` interface. Either way, lets figure out how we want to define and pass in bridge/IP properties. I think enabling the user to define individual container IP and/or subnet, bridge name, gatway etc. Eseentially everything pipeworks enables.
-* Libnetwork currently appends an index to the container side iface. If OVS internal ports are renamed after bring moved to a namespace it breaks the port. We need to change this in Libnetwork. Something like a check for duplicates should satisfy the need for index appending.
-* A default gateway/route now works but has to be passed as a destination route `0.0.0.0/0` rather then using the 'Gw' field in the route struct.
 
 ### Functional Status
 
@@ -146,3 +138,17 @@ $ ovs-vsctl show
 # Use ovsdb-client to view the OVSDB database
 $ ovsdb-client dump
 ```
+
+### Caveats
+
+* To test using the flag `--default-network` it requires docker experimental.
+* OVS bridge name, bridge IP, container subnet are all hardcoded currently. We need to bind them to `Driver` via flag opts. Added a `brOpts` struct we could modify the `Driver` interface. Either way, lets figure out how we want to define and pass in bridge/IP properties. I think enabling the user to define individual container IP and/or subnet, bridge name, gatway etc. Eseentially everything pipeworks enables.
+* Libnetwork currently appends an index to the container side iface. If OVS internal ports are renamed after bring moved to a namespace it breaks the port. We need to change this in Libnetwork. Something like a check for duplicates should satisfy the need for index appending.
+* A default gateway/route now works but has to be passed as a destination route `0.0.0.0/0` rather then using the 'Gw' field in the route struct.
+* There is a bug if there are existing namespaces in the `/var/run/docker/netns/` directory, pretty sure it is the cause of this error: `ERRO[0004] Errors encountered adding routes to the port [ eth0-42694 ]: bad file descriptor`. To cleanup this directory, unmount and delete the filehandles like so:
+
+```
+umount /var/run/docker/netns/*
+rm /var/run/docker/netns/*
+```
+

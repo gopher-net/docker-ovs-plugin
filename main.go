@@ -11,12 +11,12 @@ import (
 var (
 	// TODO: Values need to be bound to driver. Need to modify the Driver iface. Added brOpts if we want to pass that to Listen(string)
 	flagBridgeName   = cli.StringFlag{Name: "bridge-name", Value: bridgeName, Usage: "name of the OVS bridge to add containers. If it doees not exist, it will be created. default: --bridge-name=ovsbr-docker0"}
-	flagBridgeIp     = cli.StringFlag{Name: "bridge-ip", Value: bridgeIP, Usage: "IP and netmask of the bridge. default: --bridge-ip=172.18.40.1/24"}
+	flagBridgeIP     = cli.StringFlag{Name: "bridge-ip", Value: bridgeIP, Usage: "IP and netmask of the bridge. default: --bridge-ip=172.18.40.1/24"}
 	flagBridgeSubnet = cli.StringFlag{Name: "bridge-subnet", Value: bridgeSubnet, Usage: "subnet for the containers on the bridge to use (currently IPv4 support). default: --bridge-subnet=172.18.40.0/24"}
 )
 
 var (
-// TODO: Should we use CLI flags, ENVs or dnet-ctl for bridge properties.
+	// TODO: Should we use CLI flags, ENVs or dnet-ctl for bridge properties.
 	bridgeName   = "ovsbr-docker0"  // temp until binding via flags
 	bridgeSubnet = "172.18.40.0/24" // temp until binding via flags
 	bridgeIP     = "172.18.40.1/24" // temp until binding via flags
@@ -42,7 +42,7 @@ func main() {
 		flagDebug,
 		flagSocket,
 		flagBridgeName,
-		flagBridgeIp,
+		flagBridgeIP,
 		flagBridgeSubnet,
 	}
 	app.Action = Run

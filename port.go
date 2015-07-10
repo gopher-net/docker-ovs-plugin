@@ -9,10 +9,8 @@ import (
 )
 
 func (ovsdber *ovsdber) createOvsInternalPort(prefix string, bridge string, tag uint) (port string, err error) {
-	if port, err = generateRandomName(prefix, 7); err != nil {
-		return
-	}
-
+	// if you desire a longer hash add using generateRandomName(prefix, 5)
+	port = prefix
 	if ovsdber.ovsdb == nil {
 		err = errors.New("OVS not connected")
 		return
@@ -86,7 +84,7 @@ func (ovsdber *ovsdber) addInternalPort(bridgeName string, portName string, tag 
 	return nil
 }
 
-func (ovsdber *ovsdber) deletePort(ovs *libovsdb.OvsdbClient, bridgeName string, portName string) {
+func (ovsdber *ovsdber) deletePort(bridgeName string, portName string) error {
 	condition := libovsdb.NewCondition("name", "==", portName)
 	deleteOp := libovsdb.Operation{
 		Op:    "delete",
@@ -97,7 +95,7 @@ func (ovsdber *ovsdber) deletePort(ovs *libovsdb.OvsdbClient, bridgeName string,
 	portUUID := portUUIDForName(portName)
 	if portUUID == "" {
 		log.Error("Unable to find a matching Port : ", portName)
-		return
+		return fmt.Errorf("Unable to find a matching Port : [ %s ]", portName)
 	}
 
 	// Deleting a Bridge row in Bridge table requires mutating the open_vswitch table.
@@ -115,18 +113,22 @@ func (ovsdber *ovsdber) deletePort(ovs *libovsdb.OvsdbClient, bridgeName string,
 	}
 
 	operations := []libovsdb.Operation{deleteOp, mutateOp}
-	reply, _ := ovs.Transact("Open_vSwitch", operations...)
+	reply, _ := ovsdber.ovsdb.Transact("Open_vSwitch", operations...)
 
 	if len(reply) < len(operations) {
 		log.Error("Number of Replies should be atleast equal to number of Operations")
+		return fmt.Errorf("Number of Replies should be atleast equal to number of Operations")
 	}
 	for i, o := range reply {
 		if o.Error != "" && i < len(operations) {
 			log.Error("Transaction Failed due to an error :", o.Error, " in ", operations[i])
+			return fmt.Errorf("Transaction Failed due to an error: %s in %s", o.Error, operations[i])
 		} else if o.Error != "" {
 			log.Error("Transaction Failed due to an error :", o.Error)
+			return fmt.Errorf("Transaction Failed due to an error %s", o.Error)
 		}
 	}
+	return nil
 }
 
 func (ovsdber *ovsdber) addVxlanPort(bridgeName string, portName string, peerAddress string) {

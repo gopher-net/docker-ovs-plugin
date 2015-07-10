@@ -59,9 +59,9 @@ type Driver interface {
 
 // Struct for binding bridge options CLI flags
 type bridgeOpts struct {
-	brName string
+	brName   string
 	brSubnet net.IPNet
-	brIP net.IPNet
+	brIP     net.IPNet
 }
 
 type driver struct {
@@ -72,6 +72,7 @@ type driver struct {
 	network     string
 	cidr        *net.IPNet
 	nameserver  string
+	OvsdbNotifier
 }
 
 func (driver *driver) Listen(socket string) error {
@@ -147,6 +148,8 @@ func (driver *driver) handshake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Debug("Handshake completed")
+
+	driver.ovsdber.initDBCache()
 }
 
 func (driver *driver) status(w http.ResponseWriter, r *http.Request) {
@@ -253,7 +256,7 @@ func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	_, containerMask := driver.cidr.Mask.Size()
 	containerAddress := allocatedIP.String() + "/" + strconv.Itoa(containerMask)
 
-	log.Debugf("Dynamically allocated container IP is [ %s ]", allocatedIP.String())
+	log.Debugf("Libnetwork IPAM allocated container IP: [ %s ]", allocatedIP.String())
 
 	respIface := &iface{
 		Address:    containerAddress,
@@ -279,7 +282,7 @@ func (driver *driver) deleteEndpoint(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Could not decode JSON encode payload", http.StatusBadRequest)
 		return
 	}
-	Debug.Printf("Delete endpoint request: %+v", &delete)
+	log.Infof("Delete endpoint request: %+v", &delete)
 	emptyResponse(w)
 
 	// ReleaseIP releases an ip back to a network
@@ -346,6 +349,8 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Debugf("Join request: %+v", &j)
+
+	//	driver.ovsdber.initDBCache()
 	// If the bridge has been created, a port with the same name should exist
 	exists, err := driver.ovsdber.portExists(bridgeName)
 	if err != nil {
@@ -356,29 +361,30 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 		if err := driver.ovsdber.createBridge(bridgeName); err != nil {
 			log.Warnf("error creating ovs bridge [ %s ] : [ %s ]", bridgeName, err)
 		}
-	}
-	// TODO: check if exists to get rid of file exists log.
-	// Set bridge IP.
-	err = driver.setInterfaceIP(bridgeName, bridgeIP)
-	if err != nil {
-		log.Warnf("Error setting subnet: [ %s ] on bridge: [ %s ]  with an error of: %s", bridgeSubnet, bridgeName, err)
-	}
-	// Bring the bridge up
-	err = driver.ifaceUP(bridgeName)
-	if err != nil {
-		log.Warnf("Error enabling  bridge IP: [ %s ]", err)
-	}
-	// Verify there is an IP on the bridge
-	brNet, err := getIfaceAddr(bridgeName)
-	if err != nil {
-		log.Warnf("No IP address found on bridge: [ %s ]: %s", bridgeName, err)
-	} else {
-		log.Debugf("IP address [ %s ] found on bridge: [ %s ]", brNet, bridgeName)
+		// TODO: check if exists to get rid of file exists log.
+		// Set bridge IP.
+		err = driver.setInterfaceIP(bridgeName, bridgeIP)
+		if err != nil {
+			log.Debugf("Error assigning address : [ %s ] on bridge: [ %s ]  with an error of: %s", bridgeSubnet, bridgeName, err)
+		}
+		// Bring the bridge up
+		err = driver.ifaceUP(bridgeName)
+		if err != nil {
+			log.Warnf("Error enabling  bridge IP: [ %s ]", err)
+		}
+		// Verify there is an IP on the bridge
+		brNet, err := getIfaceAddr(bridgeName)
+		if err != nil {
+			log.Warnf("No IP address found on bridge: [ %s ]: %s", bridgeName, err)
+		} else {
+			log.Debugf("IP address [ %s ] found on bridge: [ %s ]", brNet, bridgeName)
+		}
 	}
 
-	endID := j.EndpointID
+	// generate a port name eth0-a42a9, unique per bridge since OVS internal ports can't be renamed
+	endID := fmt.Sprintf("eth0-" + j.EndpointID[:5])
 	// Create an OVS port that the container will use as its iface
-	portID, err := driver.ovsdber.createOvsInternalPort(endID[:5], bridgeName, 0)
+	portID, err := driver.ovsdber.createOvsInternalPort(endID, bridgeName, 0)
 	if err != nil {
 		log.Debugf("error creating OVS port [ %s ]", portID)
 		errorResponsef(w, "%s", err)
@@ -431,6 +437,14 @@ func (driver *driver) leaveEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Debugf("Leave request: %+v", &l)
+
+	portID := fmt.Sprintf("eth0-" + l.EndpointID[:5])
+	log.Debugf("Attempting to delete ovs port [ %s ] from bridge [ %s ]", portID, bridgeName)
+	err := driver.ovsdber.deletePort(bridgeName, portID)
+	if err != nil {
+		log.Errorf("delete port transaction failed due to:  [ %s ]", err)
+		return
+	}
 	// todo: clean up interface
 	// local := vethPair(l.EndpointID[:5])
 	// if err := netlink.LinkDel(local); err != nil {
@@ -497,11 +511,14 @@ func setConnectedRoute(ifaceName string, nsPid string) error {
 	// Lock the OS thread
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
+
 	origns, err := netns.Get()
 	if err != nil {
 		return err
 	}
 	defer origns.Close()
+
+	// Have to wait for the filehandle to be craeted by libnetwork
 	time.Sleep(time.Second * 1)
 	dockerNsFd, err := netns.GetFromDocker(nsPid)
 	if err != nil {
@@ -553,7 +570,7 @@ func setConnectedRoute(ifaceName string, nsPid string) error {
 		log.Errorf("Failed to set the default route [ %v ]: %s", defaultRoute, err)
 		return err
 	}
-
+	defer netns.Set(origns)
 	return nil
 }
 
