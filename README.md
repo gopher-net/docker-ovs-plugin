@@ -9,7 +9,6 @@ Still a WIP, lots to do...
 - [x] endpoint deletion code
 - [ ] determine CLI opts and binding of the values to Driver
 - [x] gateway/default route code
-- [x] need to deter
 - [x] endpoint veth pair creation
 - [x] ovs flowmods for packet forwarding. Currently OFPP_Normal
 - [x] bridge creation
@@ -18,137 +17,71 @@ Still a WIP, lots to do...
 - [x] add cli for the daemon
 - [x] dockerfile to run the daemon using official golang image
 - [x] compose file to run the openvswitch + daemon
+- [ ] containerize and get the host OS ovsdb manager connection
+- [ ] NAT for single host that could be re-used for multi-host
 - [ ] test it works!
 - [ ] code cleanup - still lots of unused code
 - [ ] restart handling issues
 - [ ] readme with how-to and hat tip to weave (this was based on their plugin)
 
-### Functional Status
 
-After you do the above, you should see the following in the OVS config. 
+### Pre-Requisites
 
-```
-$ ovs-vsctl show
-ec580710-78ed-449c-83f2-4b708b6f7718
-    Manager "ptcp:6640"
-        is_connected: true
-    Bridge "ovsbr-docker0"
-        Port "ovsbr-docker0"
-            Interface "ovsbr-docker0"
-                type: internal
-```
+1. Install the Docker experimental binary from the instructions at: [Docker Experimental](https://github.com/docker/docker/tree/master/experimental). (stop other docker instances)
+	- Quick Experimental Install: `wget -qO- https://experimental.docker.com/ | sh`
 
-When you start a container, you will see the connected and default routes with the `route` command. 
+2. Install Open vSwitch.
 
-**Note** the portname needs to be something friendlier then the nspid.
+	- *Using apt-get*
 
-```
-/ # ifconfig
-c458212ce22c Link encap:Ethernet  HWaddr C2:E5:D4:CE:7A:23
-          inet addr:172.18.40.2  Bcast:0.0.0.0  Mask:255.255.255.255
-          UP BROADCAST RUNNING  MTU:1500  Metric:1
-...        
-docker run -it --rm busybox
-/ # route
-Kernel IP routing table
-Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
-default         *               0.0.0.0         U     0      0        0 b621956803ea
-172.18.40.0     *               255.255.255.0   U     0      0        0 b621956803ea
-```
-Once you have two containers started, they can ping one another. If they are on two seperate Docker hosts, for containers to communicate to one another they either need to be on the same LAN segment (VLAN / Layer2 connectivity) through the physical network or setup OVS VXLAN tunnels between the OVS instances on each docker hosts.
+	```
+	$ sudo apt-get install openvswitch-switch 
+	$ /etc/init.d/openvswitch start
+	```
 
+	- *Using yum*
+
+	```
+	$ sudo yum install openvswitch
+	$ sudo /sbin/service openvswitch start
+	```
+
+### QuickStart Instructions
+
+1. Install and start Open vSwitch.
+2. Add OVSDB manager listener `ovs-vsctl set-manager ptcp:6640`
+3. Start Docker with the following.
+`docker -d --default-network=ovs:ovsbr-docker0`
+
+4. Next start the plugin. A pre-compiled x86_64 binary can be downloaded from the [binaries](https://github.com/dave-tucker/docker-ovs-plugin/binaries) directory. **Note:** Container option coming shortly and also on the punchlist above if you want to contribute. 
+
+	```
+	$ wget -O ./docker-ovs-plugin https://github.com/dave-tucker/docker-ovs-plugin/binaries/docker-ovs-plugin-0.1-Linux-x86_64
+	$ chmod +x docker-ovs-plugin
+	$ ./docker-ovs-plugin
+	```
+
+5. Start the plugin with `./docker-ovs-plugin` for debugging or just extra logs from the sausage factory, add the debug flag `./docker-ovs-plugin -d`
+
+6. Run some containers and verify they can ping one another with `docker run -it --rm busybox` or `docker run -it --rm ubuntu` etc, any other docker images you prefer. Alternatively, paste a few dozen or more containers running in the background and watch the ports provision and de-provision in OVS with `docker run -itd busybox`
+
+	```
+	INFO[0000] OVSDB network driver initialized
+	INFO[0005] Dynamically allocated container IP is: [ 172.18.40.2 ]
+	INFO[0005] Attached veth [ ovs-veth0-ac097 ] to bridge [ ovsbr-docker0 ]
+	INFO[0009] Deleted OVS port [ ovs-veth0-ac097 ] from bridge [ ovsbr-docker0 ]
+	```
+
+ **Additional Notes**: 
+ - The argument passed to `--default-network` the plugin is identified via `ovs`. More specifically, the socket file that currently defaults to `/usr/share/docker/plugins/ovs.sock`.
+ - The default bridge name in the example is `ovsbr-docker0`. 
+ - The bridge name is temporarily hardcoded. That and more will be configurable via flags. (Help us define and code those flags). 
+ - Add other flags as desired such as `--dns=8.8.8.8` for DNS etc.
+ - To view the Open vSwitch configuration, use `ovs-vsctl show`.
+ - To view the OVSDB tables, run `ovsdb-client dump`. All of the mentioned OVS utils are part of the standard binary installations with very well documented [man pages](http://openvswitch.org/support/dist-docs/). 
+ - The containers are brought up on a flat bridge. This means there is no NATing occouring. A layer 2 agacency such as a VLAN or overlay tunnel is required for multi-host communications. If the traffic needs to be routed an external process to act as a gateway (on the TODO list so dig in if interested in multi-host or overlays). 
+ - Download a quick video demo [here](https://dl.dropboxusercontent.com/u/51927367/Docker-OVS-Plugin.mp4). 
+ 
 ### Hacking and Contributing
 
-* Instructions for building docker with the patch below applied to libnetwork in the docker build along with starting the plugin as follows:
-
-1. `git clone https://github.com/docker/docker.git`
-2. `cd docker`
-3. `vi vendor/src/github.com/docker/libnetwork/sandbox/interface_linux.go` comment out the rename section in the patch below.
-4. Build docker passing the the experimental flag. `DOCKER_EXPERIMENTAL=true make`. This is what provides `--default-network` flag to the docker daemon options. Note: A Docker daemon needs to be running when you run `make` in Docker since it builds the binary in a container.
-5. Once the build is complete, you will have a docker binary with the libnetwork experimental flags supported. Start the docker damon with `./bundles/1.8.0-dev/binary/docker -d -D --default-network=ovs:ovsbr-docker0` (-D debug is optional). `ovsbr-docker0` is the OVS bridge name used.  
-6. Clone the ovs plugin with `git clone https://github.com/dave-tucker/docker-ovs-plugin.git`. 
-7. Start the plugin with `go run *.go -d`
-8. Run a couple of containers and verify they can ping one another with `docker run -it --rm busybox` or any other docker runs you prefer.
-
-If you want to download a pre-compiled binary a build from 7/8/15 can be found [here](https://www.dropbox.com/s/yzg9mttvw3ddtbc/docker-experimental-amd64-linux.tar?dl=1)
-
-* Iterface renaming patch: Currently libnetwork renames the port within the container namespace. This breaks the OVS internal port. To run this driver, you can simply comment out the following in `vendor/src/github.com/docker/libnetwork/sandbox/interface_linux.go`
-
-
-```
-diff --git a/vendor/src/github.com/docker/libnetwork/sandbox/interface_linux.go
-index 7fc8c70..b12e08e 100644
---- a/vendor/src/github.com/docker/libnetwork/sandbox/interface_linux.go
-+++ b/vendor/src/github.com/docker/libnetwork/sandbox/interface_linux.go
-@@ -141,15 +141,15 @@ func (i *nwIface) Remove() error {
-                                return err
-                        }
-                }
--
--               n.Lock()
--               for index, intf := range n.iFaces {
--                       if intf == i {
--                               n.iFaces = append(n.iFaces[:index], n.iFaces[in
--                               break
--                       }
--               }
--               n.Unlock()
-
-+               // n.Lock()
-+               // for index, intf := range n.iFaces {
-+               //      if intf == i {
-+               //              n.iFaces = append(n.iFaces[:index], n.iFaces[in
-+               //              break
-+               //      }
-+               // }
-+               // n.Unlock()
-                return nil
-        })
-```
-
-* Additional setup and OVS specific commands:
-
-```
-$ apt-get install openvswitch-switch
-# Tell OVS to listen for incoming OVSDB manager connections on port 6640
-$ ovs-vsctl set-manager ptcp:6640
-
-# Install Docker with the instructions above patching the interface rename and building the experimental binary.
-
-# Clone and start the plugin
-$ git clone https://github.com/dave-tucker/docker-ovs-plugin.git
-$ cd docker-ovs-plugin
-$ go run *.go -d
-
-# Start the Docker daemon with the name of the plugin socket.
-# In this case it is ovs  (/usr/share/docker/plugins/ovs.sock) 
-# To run docker in the foreground for debugging first stop the service
-$ systemctl stop docker (or depending on OS ver) /etc/init.d/docker stop 
-
-# Start the service with the following options or add them to DOCKER_OPTS
-# in /etc/default/docker Start the daemon with the debug flag
-$ docker -d -D --default-network=ovs:ovsbr-docker0
-
-# Run a container
-$ docker run -it --rm busybox
-
-# Use ovs-vsctl to see the bridge and ports created
-$ ovs-vsctl show
-
-# Use ovsdb-client to view the OVSDB database
-$ ovsdb-client dump
-```
-
-### Caveats
-
-* To test using the flag `--default-network` it requires docker experimental.
-* OVS bridge name, bridge IP, container subnet are all hardcoded currently. We need to bind them to `Driver` via flag opts. Added a `brOpts` struct we could modify the `Driver` interface. Either way, lets figure out how we want to define and pass in bridge/IP properties. I think enabling the user to define individual container IP and/or subnet, bridge name, gatway etc. Eseentially everything pipeworks enables.
-* Libnetwork currently appends an index to the container side iface. If OVS internal ports are renamed after bring moved to a namespace it breaks the port. We need to change this in Libnetwork. Something like a check for duplicates should satisfy the need for index appending.
-* A default gateway/route now works but has to be passed as a destination route `0.0.0.0/0` rather then using the 'Gw' field in the route struct.
-* There is a bug if there are existing namespaces in the `/var/run/docker/netns/` directory, pretty sure it is the cause of this error: `ERRO[0004] Errors encountered adding routes to the port [ eth0-42694 ]: bad file descriptor`. To cleanup this directory, unmount and delete the filehandles like so:
-
-```
-umount /var/run/docker/netns/*
-rm /var/run/docker/netns/*
-```
-
+Yes!!
