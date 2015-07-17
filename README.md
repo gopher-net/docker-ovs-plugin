@@ -1,12 +1,11 @@
 docker-ovs-plugin
 =================
 
-### Pre-Requisites
+### QuickStart Instructions
 
 1. Install the Docker experimental binary from the instructions at: [Docker Experimental](https://github.com/docker/docker/tree/master/experimental). (stop other docker instances)
 	- Quick Experimental Install: `wget -qO- https://experimental.docker.com/ | sh`
-
-2. Install Open vSwitch.
+1. Install and start Open vSwitch.
 
 	- *Using apt-get*
 
@@ -21,10 +20,6 @@ docker-ovs-plugin
 	$ sudo yum install openvswitch
 	$ sudo /sbin/service openvswitch start
 	```
-
-### QuickStart Instructions
-
-1. Install and start Open vSwitch.
 2. Add OVSDB manager listener `ovs-vsctl set-manager ptcp:6640`
 3. Start Docker with the following.
 `docker -d --default-network=ovs:ovsbr-docker0`
