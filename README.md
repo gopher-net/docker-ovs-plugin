@@ -29,10 +29,10 @@ docker-ovs-plugin
 3. Start Docker with the following.
 `docker -d --default-network=ovs:ovsbr-docker0`
 
-4. Next start the plugin. A pre-compiled x86_64 binary can be downloaded from the [binaries](https://github.com/dave-tucker/docker-ovs-plugin/binaries) directory. **Note:** Running inside a container is a todo, pop it into issues if you want to help contribute that. 
+4. Next start the plugin. A pre-compiled x86_64 binary can be downloaded from the [binaries](https://github.com/gopher-net/docker-ovs-plugin/tree/master/binaries) directory. **Note:** Running inside a container is a todo, pop it into issues if you want to help contribute that. 
 
 	```
-	$ wget -O ./docker-ovs-plugin https://github.com/dave-tucker/docker-ovs-plugin/binaries/docker-ovs-plugin-0.1-Linux-x86_64
+	$ wget -O ./docker-ovs-plugin https://github.com/gopher-net/docker-ovs-plugin/tree/master/binaries/docker-ovs-plugin-0.1-Linux-x86_64
 	$ chmod +x docker-ovs-plugin
 	$ ./docker-ovs-plugin
 	```
