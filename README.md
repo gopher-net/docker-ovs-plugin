@@ -29,7 +29,7 @@ docker-ovs-plugin
 3. Start Docker with the following.
 `docker -d --default-network=ovs:ovsbr-docker0`
 
-4. Next start the plugin. A pre-compiled x86_64 binary can be downloaded from the [binaries](https://github.com/dave-tucker/docker-ovs-plugin/binaries) directory. **Note:** Container option coming shortly and also on the punchlist above if you want to contribute. 
+4. Next start the plugin. A pre-compiled x86_64 binary can be downloaded from the [binaries](https://github.com/dave-tucker/docker-ovs-plugin/binaries) directory. **Note:** Running inside a container is a todo, pop it into issues if you want to help contribute that. 
 
 	```
 	$ wget -O ./docker-ovs-plugin https://github.com/dave-tucker/docker-ovs-plugin/binaries/docker-ovs-plugin-0.1-Linux-x86_64
@@ -55,12 +55,12 @@ docker-ovs-plugin
  - Add other flags as desired such as `--dns=8.8.8.8` for DNS etc.
  - To view the Open vSwitch configuration, use `ovs-vsctl show`.
  - To view the OVSDB tables, run `ovsdb-client dump`. All of the mentioned OVS utils are part of the standard binary installations with very well documented [man pages](http://openvswitch.org/support/dist-docs/). 
- - The containers are brought up on a flat bridge. This means there is no NATing occouring. A layer 2 agacency such as a VLAN or overlay tunnel is required for multi-host communications. If the traffic needs to be routed an external process to act as a gateway (on the TODO list so dig in if interested in multi-host or overlays). 
+ - The containers are brought up on a flat bridge. This means there is no NATing occurring. A layer 2 adjacency such as a VLAN or overlay tunnel is required for multi-host communications. If the traffic needs to be routed an external process to act as a gateway (on the TODO list so dig in if interested in multi-host or overlays). 
  - Download a quick video demo [here](https://dl.dropboxusercontent.com/u/51927367/Docker-OVS-Plugin.mp4). 
  
 ### Hacking and Contributing
 
-Yes!!
+Yes!! Please see issues for todos or add todos into [issues](https://github.com/gopher-net/docker-ovs-plugin/issues)! Only rule here is no jerks.
 
 ### Thanks
 
