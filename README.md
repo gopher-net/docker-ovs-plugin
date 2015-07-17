@@ -1,30 +1,6 @@
 docker-ovs-plugin
 =================
 
-Still a WIP, lots to do...
-
-- [x] network creation code
-- [x] ip allocation via libnetwork ipam code
-- [x] endpoint creation code
-- [x] endpoint deletion code
-- [ ] determine CLI opts and binding of the values to Driver
-- [x] gateway/default route code
-- [x] endpoint veth pair creation
-- [x] ovs flowmods for packet forwarding. Currently OFPP_Normal
-- [x] bridge creation
-- [x] ovsdb manager initializaiton
-- [x] ovsdb table caching
-- [x] add cli for the daemon
-- [x] dockerfile to run the daemon using official golang image
-- [x] compose file to run the openvswitch + daemon
-- [ ] containerize and get the host OS ovsdb manager connection
-- [ ] NAT for single host that could be re-used for multi-host
-- [ ] test it works!
-- [ ] code cleanup - still lots of unused code
-- [ ] restart handling issues
-- [ ] readme with how-to and hat tip to weave (this was based on their plugin)
-
-
 ### Pre-Requisites
 
 1. Install the Docker experimental binary from the instructions at: [Docker Experimental](https://github.com/docker/docker/tree/master/experimental). (stop other docker instances)
@@ -85,3 +61,7 @@ Still a WIP, lots to do...
 ### Hacking and Contributing
 
 Yes!!
+
+### Thanks
+
+Thanks to the guys at [Weave](http://weave.works) for writing their awesome [plugin](https://github.com/weaveworks/docker-plugin). We borrowed a lot of code from here to make this happen!
