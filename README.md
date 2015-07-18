@@ -11,7 +11,7 @@ docker-ovs-plugin
 
 	```
 	$ sudo apt-get install openvswitch-switch 
-	$ /etc/init.d/openvswitch start
+	$ sudo /etc/init.d/openvswitch-switch start
 	```
 
 	- *Using yum*
@@ -20,19 +20,47 @@ docker-ovs-plugin
 	$ sudo yum install openvswitch
 	$ sudo /sbin/service openvswitch start
 	```
-2. Add OVSDB manager listener `ovs-vsctl set-manager ptcp:6640`
-3. Start Docker with the following.
-`docker -d --default-network=ovs:ovsbr-docker0`
-
-4. Next start the plugin. A pre-compiled x86_64 binary can be downloaded from the [binaries](https://github.com/gopher-net/docker-ovs-plugin/tree/master/binaries) directory. **Note:** Running inside a container is a todo, pop it into issues if you want to help contribute that. 
+2. Add OVSDB manager listener:
 
 	```
-	$ wget -O ./docker-ovs-plugin https://github.com/gopher-net/docker-ovs-plugin/tree/master/binaries/docker-ovs-plugin-0.1-Linux-x86_64
+	$ sudo ovs-vsctl set-manager ptcp:6640
+	```
+	
+3. Create the `ovsbr-docker0` bridge by hand:
+	
+	```
+	$ sudo ovs-vsctl add-br ovsbr-docker0
+	```
+	
+4. Start Docker with the following:
+	
+	```
+	$sudo docker -d --default-network=ovs:ovsbr-docker0`
+	```
+ 
+ 	Or edit the default configuration (e.g `/etc/default/docker`) and restart the service
+ 	```
+ 	$ sudo su
+ 	# echo 'DOCKER_OPTS="--default-network=ovs:ovsbr-docker0"' >> /etc/default/docker
+ 	# service docker restart
+ 	```
+5. Create the socket the plugin uses:
+
+	```
+	$ sudo su
+	# mkdir -p /usr/share/docker/plugins
+	# touch /usr/share/docker/plugins/ovs.sock
+	```
+	
+6. Next start the plugin. A pre-compiled x86_64 binary can be downloaded from the [binaries](https://github.com/gopher-net/docker-ovs-plugin/tree/master/binaries) directory. **Note:** Running inside a container is a todo, pop it into issues if you want to help contribute that. 
+
+	```
+	$ wget -O ./docker-ovs-plugin https://github.com/gopher-net/docker-ovs-plugin/raw/master/binaries/docker-ovs-plugin-0.1-Linux-x86_64
 	$ chmod +x docker-ovs-plugin
 	$ ./docker-ovs-plugin
 	```
-
-5. Start the plugin with `./docker-ovs-plugin` for debugging or just extra logs from the sausage factory, add the debug flag `./docker-ovs-plugin -d`
+	
+	For debugging or just extra logs from the sausage factory, add the debug flag `./docker-ovs-plugin -d`
 
 6. Run some containers and verify they can ping one another with `docker run -it --rm busybox` or `docker run -it --rm ubuntu` etc, any other docker images you prefer. Alternatively, paste a few dozen or more containers running in the background and watch the ports provision and de-provision in OVS with `docker run -itd busybox`
 
