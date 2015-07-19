@@ -6,7 +6,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/codegangsta/cli"
-	"github.com/dave-tucker/docker-ovs-plugin/plugin/ovs"
+	"github.com/gopher-net/docker-ovs-plugin/plugin/ovs"
 )
 
 const version = "0.1"
