@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"net"
 	"regexp"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/libnetwork/netutils"
@@ -124,11 +125,17 @@ func getIfaceAddr(name string) (*net.IPNet, error) {
 	return addrs[0].IPNet, nil
 }
 
-// Set the IP addr of a link
+// Set the IP addr of a netlink interface
 func (driver *driver) setInterfaceIP(name string, rawIP string) error {
 	iface, err := netlink.LinkByName(name)
 	if err != nil {
-		return err
+		log.Debugf("error retrieving new OVS bridge link [ %s ] likely sync between ovs and netlink, retrying in 1 second..", bridgeName)
+		time.Sleep(1 * time.Second)
+		iface, err = netlink.LinkByName(name)
+		if err != nil {
+			log.Errorf("Error retrieving the new OVS bridge from netlink: %s", err)
+			return err
+		}
 	}
 	ipNet, err := netlink.ParseIPNet(rawIP)
 	if err != nil {

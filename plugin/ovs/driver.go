@@ -253,7 +253,6 @@ func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	endID := create.EndpointID
 
 	if netID != driver.network {
-		log.Info("60-driver-createNetwork driver")
 		errorResponsef(w, "No such network %s", netID)
 		return
 	}
