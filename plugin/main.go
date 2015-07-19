@@ -47,22 +47,21 @@ func cliInit(ctx *cli.Context) error {
 		log.SetLevel(log.InfoLevel)
 	}
 	log.SetOutput(os.Stderr)
-	// Verify the path to the plugin socket exists
-	// Should we make it if it doesnt exist?
-	sockDir, _ := filepath.Split(socketFile)
-	dhandle, err := os.Stat(sockDir)
-	if err != nil {
-		log.Fatalf("socket filepath [ %s ] does not exist", sockDir)
+	// Verify the path to the plugin socket oath and filename were passed
+	sockDir, fileHandle := filepath.Split(socketFile)
+	if fileHandle == "" {
+		log.Fatalf("Socket file path and name are required. Ex. /usr/share/docker/plugins/<plugin_name>.sock")
 	}
-	// Verify the path is a directory
-	if !dhandle.IsDir() {
-		log.Fatalf("socket filepath [ %s ] is not a directory", sockDir)
+	// Make the plugin filepath and parent dir if it does not already exist
+	if err := os.MkdirAll(sockDir, 0755); err != nil && !os.IsExist(err) {
+		log.Warnf("Could not create net plugin path directory: [ %s ]", err)
 	}
-	// If the ovs plugin socket file already exists, remove it.
+	// If the plugin socket file already exists, remove it.
 	if _, err := os.Stat(socketFile); err == nil {
-		log.Debugf("socket file [ %s ] already exists, attempting to remove it.", socketFile)
+		log.Debugf("socket file [ %s ] already exists, deleting..", socketFile)
 		removeSock(socketFile)
 	}
+	log.Debugf("Plugin socket path is [ %s ] with a file handle [ %s ]", sockDir, fileHandle)
 	return nil
 }
 
