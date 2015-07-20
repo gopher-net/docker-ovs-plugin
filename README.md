@@ -62,7 +62,7 @@ docker-ovs-plugin
 	
 	For debugging or just extra logs from the sausage factory, add the debug flag `./docker-ovs-plugin -d`
 
-6. Run some containers and verify they can ping one another with `docker run -it --rm busybox` or `docker run -it --rm ubuntu` etc, any other docker images you prefer. Alternatively, paste a few dozen or more containers running in the background and watch the ports provision and de-provision in OVS with `docker run -itd busybox`
+6. Run some containers and verify they can ping one another with `docker run -it --rm busybox` or `docker run -it --rm ubuntu` etc, or any other docker images you prefer. Alternatively, paste a few dozen or more containers running in the background and watch the ports provision and de-provision in OVS with `docker run -itd busybox`
 
 	```
 	INFO[0000] OVSDB network driver initialized
@@ -84,6 +84,28 @@ docker-ovs-plugin
 ### Hacking and Contributing
 
 Yes!! Please see issues for todos or add todos into [issues](https://github.com/gopher-net/docker-ovs-plugin/issues)! Only rule here is no jerks.
+
+Since this plugin uses netlink for L3 IP assigments, a Linux host that can build [vishvananda/netlink](https://github.com/vishvananda/netlink) library is required.
+
+1. Install [Go](https://golang.org/doc/install). OVS as listed above and a kernel >= 3.19.
+
+2. Clone and start the OVS plugin:
+
+    ```
+    git clone https://github.com/gopher-net/docker-ovs-plugin.git
+    cd docker-ovs-plugin/plugin
+    # Get the Go dependdencies
+    go get ./...
+    go run main.go
+    ```
+
+3. The rest is the same as the Quickstart Section.
+
+ **Note:** If you are new to Go.
+
+ - Go compile times are very fast due to linking being done statically. In order to link the libraries, Go looks for source code in the `~/go/src/` directory.
+ - Typically you would clone the project to a directory like so `go/src/github.com/gopher-net/docker-ovs-plugin/`. Go knows where to look for the root of the go code, binaries and pkgs based on the `$GOPATH` shell ENV.
+ - For example, you would clone to the path `/home/<username>/go/src/github.com/gopher-net/docker-ovs-plugin/` and put `export GOPATH=/home/<username>/go` in wherever you store your persistent ENVs in places like `~/.bashrc`, `~/.profile` or `~/.bash_profile` depending on the OS and system configuration.
 
 ### Thanks
 
