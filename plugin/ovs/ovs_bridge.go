@@ -46,10 +46,11 @@ func (driver *driver) verifyBridge() error {
 		log.Debugf("IP address [ %s ] found on bridge: [ %s ]", brNet, bridgeName)
 		return nil
 	}
-	// set bridge IP.
+	// Parse the bridge IP.
 	brAddr, _, err := net.ParseCIDR(bridgeSubnet)
 	if err != nil {
-		log.Warnf("Error parsing cidr from the default subnet: %s", err)
+		log.Errorf("Error parsing cidr from the default subnet: %s", err)
+		return err
 	}
 	if bridgeIfaceNet != "" {
 		err := driver.setInterfaceIP(bridgeName, bridgeIfaceNet)
