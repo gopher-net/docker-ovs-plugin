@@ -22,32 +22,6 @@ const (
 	containerEthName = "eth"
 )
 
-var bridgeNetworks []*net.IPNet
-
-func init() {
-	// Here we don't follow the convention of using the 1st IP of the range for the gateway.
-	// This is to use the same gateway IPs as the /24 ranges, which predate the /16 ranges.
-	// In theory this shouldn't matter - in practice there's bound to be a few scripts relying
-	// on the internal addressing or other stupid things like that.
-	// They shouldn't, but hey, let's not break them unless we really have to.
-	// Don't use 172.16.0.0/16, it conflicts with EC2 DNS 172.16.0.23
-
-	// 172.[17-31].42.1/16
-	mask := []byte{255, 255, 0, 0}
-	for i := 17; i < 32; i++ {
-		bridgeNetworks = append(bridgeNetworks, &net.IPNet{IP: []byte{172, byte(i), 42, 1}, Mask: mask})
-	}
-	// 10.[0-255].42.1/16
-	for i := 0; i < 256; i++ {
-		bridgeNetworks = append(bridgeNetworks, &net.IPNet{IP: []byte{10, byte(i), 42, 1}, Mask: mask})
-	}
-	// 192.168.[42-44].1/24
-	mask[2] = 255
-	for i := 42; i < 45; i++ {
-		bridgeNetworks = append(bridgeNetworks, &net.IPNet{IP: []byte{192, 168, byte(i), 1}, Mask: mask})
-	}
-}
-
 type Driver interface {
 	Listen(string) error
 }
