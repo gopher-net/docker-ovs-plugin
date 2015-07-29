@@ -15,7 +15,7 @@ ovs-vsctl set-manager ptcp:6640
 echo DOCKER_OPTS=\\"--default-network=ovs:ovsbr-docker0\\" >> /etc/default/docker
 service docker restart
 mkdir -p /usr/share/docker/plugins
-touch /usr/share/docker/plugins/ovs.sock
+touch /run/docker/plugins/ovs.sock
 wget -O /home/vagrant/docker-ovs-plugin https://github.com/gopher-net/docker-ovs-plugin/raw/master/binaries/docker-ovs-plugin-0.1-Linux-x86_64
 chmod +x /home/vagrant/docker-ovs-plugin
 SCRIPT

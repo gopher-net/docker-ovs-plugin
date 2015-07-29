@@ -4,17 +4,19 @@ import "github.com/codegangsta/cli"
 
 // Exported variables
 var (
-	// TODO: Values need to be bound to driver. Need to modify the Driver iface. Added brOpts if we want to pass that to Listen(string)
-	FlagBridgeName   = cli.StringFlag{Name: "bridge-name", Value: bridgeName, Usage: "name of the OVS bridge to add containers. If it doees not exist, it will be created. default: --bridge-name=ovsbr-docker0"}
-	FlagBridgeIP     = cli.StringFlag{Name: "bridge-net", Value: bridgeIfaceNet, Usage: "IP and netmask of the bridge. default: --bridge-ip=172.18.40.1/24"}
-	FlagBridgeSubnet = cli.StringFlag{Name: "bridge-subnet", Value: bridgeSubnet, Usage: "subnet for the containers on the bridge to use (currently IPv4 support). default: --bridge-subnet=172.18.40.0/24"}
+	FlagIpVlanMode   = cli.StringFlag{Name: "mode", Value: ovsDriverMode, Usage: "name of the OVS driver mode [nat|flat]. (default: l2)"}
+	FlagBridgeSubnet = cli.StringFlag{Name: "bridge-subnet", Value: bridgeSubnet, Usage: "(required for flat L2 mode) subnet for the containers on the bridge to use. default only applies to NAT mode: --bridge-subnet=172.18.40.0/24"}
+	FlagMtu          = cli.IntFlag{Name: "mtu", Value: defaultMTU, Usage: "MTU of the container interface (default: 1440 Note: greater then 1500 unsupported atm)"}
+	FlagGateway      = cli.StringFlag{Name: "gateway", Value: gatewayIP, Usage: "(required for flat L2 mode) IP of the default gateway (default NAT mode: 172.18.40.1)"}
+	// Bridge name currently needs to match the docker -run bridge name. Leaving this unmodifiable until that is sorted
+	FlagBridgeName = cli.StringFlag{Name: "bridge-name", Value: bridgeName, Usage: "name of the OVS bridge to add containers. (default name: ovsbr-docker0"}
 )
 
 // Unexported variables
 var (
-	// TODO: Temp hardcodes, bind to CLI flags and/or dnet-ctl for bridge properties.
-	bridgeName     = "ovsbr-docker0"  // temp until binding via flags
-	bridgeSubnet   = "172.18.40.0/24" // temp until binding via flags
-	bridgeIfaceNet = "172.18.40.1/24" // temp until binding via flags
-	gatewayIP      = "172.18.40.1"    // Bridge vs. GW IPs
+	bridgeName    = "ovsbr-docker0"  // TODO: currently immutable
+	bridgeSubnet  = "172.18.40.0/24" // NAT mode can use this addr. Flat (L2) mode requires an IPNet that will overwrite this val.
+	gatewayIP     = ""               // NAT mode will use the first usable address of the bridgeSubnet."172.18.40.0/24" would use "172.18.40.1" as a gateway. Flat L2 mode requires an external gateway for L3 routing
+	ovsDriverMode = "nat"            // Default mode is NAT.
+	defaultMTU    = 1450
 )

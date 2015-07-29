@@ -1,4 +1,4 @@
 #!/bin/sh
 
-touch /usr/share/docker/plugins/ovs.sock
+touch /run/docker/plugins/ovs.sock
 docker-compose up -d

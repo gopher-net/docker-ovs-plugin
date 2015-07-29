@@ -3,9 +3,10 @@ package ovs
 import (
 	"errors"
 	"fmt"
-	"net"
+	"strings"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/iptables"
 	"github.com/socketplane/libovsdb"
 )
 
@@ -15,19 +16,19 @@ func (driver *driver) setupBridge() error {
 		log.Errorf("error creating ovs bridge [ %s ] : [ %s ]", bridgeName, err)
 		return err
 	}
-	// Set bridge IP.
-	brAddr, _, err := net.ParseCIDR(bridgeIfaceNet)
-	if err != nil {
-		log.Warnf("Error parsing cidr from the default subnet: %s", err)
-	}
-	// Set the L3 IP addr on the bridge netlink iface
-	if bridgeIfaceNet != "" {
-		err := driver.setInterfaceIP(bridgeName, bridgeIfaceNet)
-		// if the bridge IP and it is the gateway log an error. TODO: Check if the brIP exists already
-		if err != nil && gatewayIP == brAddr.String() {
-			log.Debugf("Error assigning address : [ %s ] on bridge: [ %s ]  with an error of: %s", bridgeSubnet, bridgeName, err)
+
+	// Set the L3 addr on the bridge's netlink iface if in NAT since it needs to masq
+	if driver.pluginConfig.mode == modeNAT {
+		// create a string representation of the bridge address in cidr form (ip/mask)
+		bridgeMask := strings.Split(driver.pluginConfig.brSubnet.String(), "/")
+		bridgeCidr := fmt.Sprintf("%s/%s", driver.pluginConfig.gatewayIP, bridgeMask[1])
+		// Set bridge IP.
+		err := driver.setInterfaceIP(bridgeName, bridgeCidr)
+		if err != nil {
+			log.Debugf("Error assigning address:[ %s ] on bridge:[ %s ]  with an error of: %s", bridgeCidr, bridgeName, err)
 		}
 	}
+
 	// Verify there is an IP on the netlink iface. If it is the gateway it is a problem.
 	brNet, err := getIfaceAddr(bridgeName)
 	if err != nil {
@@ -39,27 +40,29 @@ func (driver *driver) setupBridge() error {
 }
 
 // verifyBridge is if the bridge already existed and ensures it has a netlink L3 IP
-func (driver *driver) verifyBridge() error {
+func (driver *driver) verifyBridgeIp() error {
 	// Verify there is an IP on the bridge
 	brNet, err := getIfaceAddr(bridgeName)
-	if err == nil {
+	if brNet != nil {
 		log.Debugf("IP address [ %s ] found on bridge: [ %s ]", brNet, bridgeName)
 		return nil
 	}
-	// Parse the bridge IP.
-	brAddr, _, err := net.ParseCIDR(bridgeSubnet)
-	if err != nil {
-		log.Errorf("Error parsing cidr from the default subnet: %s", err)
-		return err
-	}
-	if bridgeIfaceNet != "" {
-		err := driver.setInterfaceIP(bridgeName, bridgeIfaceNet)
-		// if the there is an error setting the br IP and it is the gateway return an err
-		if err != nil && gatewayIP == brAddr.String() {
-			log.Warnf("Error assigning address : [ %s ] on bridge: [ %s ]  with an error of: %s", bridgeSubnet, bridgeName, err)
+
+	// Set the L3 addr on the bridge's netlink iface if in NAT since it needs to masq
+	if driver.pluginConfig.mode == modeNAT {
+		// create a string representation of the bridge address in cidr form (ip/mask)
+		bridgeMask := strings.Split(driver.pluginConfig.brSubnet.String(), "/")
+		bridgeCidr := fmt.Sprintf("%s/%s", driver.pluginConfig.gatewayIP, bridgeMask[1])
+
+		// Set bridge IP.
+		log.Debugf("Assigning IP address [ %s ] to bridge: [ %s ]", brNet, bridgeName)
+		err := driver.setInterfaceIP(bridgeName, bridgeCidr)
+		if err != nil {
+			log.Debugf("Error assigning address:[ %s ] on bridge:[ %s ]  with an error of: %s", bridgeCidr, bridgeName, err)
 		}
 	}
-	return nil
+
+	return err
 }
 
 func (ovsdber *ovsdber) createBridgeIface(name string) error {
@@ -210,5 +213,28 @@ func (driver *driver) deleteBridge(bridgeName string) error {
 		}
 	}
 	log.Debugf("OVSDB delete bridge transaction succesful")
+	return nil
+}
+
+// todo: reconcile with what libnetwork does and port mappings
+func (driver *driver) natOut() error {
+	masquerade := []string{
+		"POSTROUTING", "-t", "nat",
+		"-s", driver.pluginConfig.brSubnet.String(),
+		"-j", "MASQUERADE",
+	}
+	if _, err := iptables.Raw(
+		append([]string{"-C"}, masquerade...)...,
+	); err != nil {
+		incl := append([]string{"-I"}, masquerade...)
+		if output, err := iptables.Raw(incl...); err != nil {
+			return err
+		} else if len(output) > 0 {
+			return &iptables.ChainError{
+				Chain:  "POSTROUTING",
+				Output: output,
+			}
+		}
+	}
 	return nil
 }

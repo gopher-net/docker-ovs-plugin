@@ -6,11 +6,10 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strconv"
+	"strings"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/libnetwork/ipallocator"
-	"github.com/docker/libnetwork/types"
 	"github.com/gorilla/mux"
 	"github.com/vishvananda/netlink"
 )
@@ -26,11 +25,13 @@ type Driver interface {
 	Listen(string) error
 }
 
-// Struct for binding bridge options CLI flags
-type bridgeOpts struct {
-	brName   string
-	brSubnet net.IPNet
-	brIP     net.IPNet
+// Struct for binding plugin specific configurations (cli.go for details).
+type pluginConfig struct {
+	mtu        int
+	bridgeName string
+	mode       string
+	brSubnet   *net.IPNet
+	gatewayIP  net.IP
 }
 
 type driver struct {
@@ -42,6 +43,7 @@ type driver struct {
 	cidr        *net.IPNet
 	nameserver  string
 	OvsdbNotifier
+	pluginConfig
 }
 
 func (driver *driver) Listen(socket string) error {
@@ -141,14 +143,7 @@ func (driver *driver) createNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	driver.network = create.NetworkID
-
-	_, ipNet, err := net.ParseCIDR(bridgeSubnet)
-	if err != nil {
-		log.Warnf("Error parsing cidr from the default subnet: %s", err)
-	}
-	cidr := ipNet
-	driver.cidr = cidr
-	driver.ipAllocator.RequestIP(cidr, nil)
+	driver.ipAllocator.RequestIP(driver.pluginConfig.brSubnet, nil)
 
 	emptyResponse(w)
 }
@@ -170,8 +165,6 @@ func (driver *driver) deleteNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	driver.network = ""
-	// TODO: needs work for multi-bridge. NetworkID needs to be bound to a bridgeName
-	// TODO: needs testing
 	err := driver.deleteBridge(bridgeName)
 	if err != nil {
 		log.Errorf("Deleting bridge:[ %s ] and network:[ %s ] failed: %s", bridgeName, bridgeSubnet, err)
@@ -205,19 +198,24 @@ func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Unable to decode JSON payload: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	// If the bridge has been created, a port with the same name should exist
+
+	// If the bridge has been created, an OVSDB port table row should exist
 	exists, err := driver.ovsdber.portExists(bridgeName)
 	if err != nil {
-		log.Debugf("OVS bridge already exists: %s", err)
-		driver.verifyBridge()
+		log.Debugf("Error querying the ovsdb cache: %s", err)
 	}
+
 	// If the bridge does not exist create and assign an IP
 	if !exists {
 		err := driver.setupBridge()
 		if err != nil {
 			log.Errorf("unable to setup the OVS bridge [ %s ]: %s ", bridgeName, err)
 		}
+	} else {
+		log.Debugf("OVS bridge [ %s ] already exists, verifying its configuration.", bridgeName)
+		driver.verifyBridgeIp()
 	}
+
 	// Bring the bridge up
 	err = driver.interfaceUP(bridgeName)
 	if err != nil {
@@ -232,17 +230,19 @@ func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	// Request an IP address from libnetwork based on the cidr scope
 	// TODO: Add a user defined static ip addr option
-	allocatedIP, err := driver.ipAllocator.RequestIP(driver.cidr, nil)
+	allocatedIP, err := driver.ipAllocator.RequestIP(driver.pluginConfig.brSubnet, nil)
 	if err != nil || allocatedIP == nil {
 		log.Errorf("Unable to obtain an IP address from libnetwork ipam: %s", err)
 		errorResponsef(w, "%s", err)
 		return
 	}
+
 	// generate a mac address for the pending container
 	mac := makeMac(allocatedIP)
 	// Have to convert container IP to a string ip/mask format
-	_, containerMask := driver.cidr.Mask.Size()
-	containerAddress := allocatedIP.String() + "/" + strconv.Itoa(containerMask)
+	bridgeMask := strings.Split(driver.pluginConfig.brSubnet.String(), "/")
+	containerAddress := allocatedIP.String() + "/" + bridgeMask[1]
+
 	log.Infof("Dynamically allocated container IP is: [ %s ]", allocatedIP.String())
 
 	respIface := &iface{
@@ -253,6 +253,13 @@ func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
 		Interfaces: []*iface{respIface},
 	}
 	objectResponse(w, resp)
+
+	if driver.pluginConfig.mode == modeNAT {
+		err := driver.natOut()
+		if err != nil {
+			log.Errorf("Error setting NAT mode iptable rules for OVS bridge [ %s ]: %s ", driver.pluginConfig.mode, err)
+		}
+	}
 	log.Debugf("Create endpoint %s %+v", endID, resp)
 }
 
@@ -351,14 +358,6 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Warnf("Error enabling  Veth local iface: [ %v ]", local)
 	}
-	/* ------- Attaching Veth pair via ovsdb no worky  -------- */
-	// Attach half of the veth pair as an OVS port to the OVS bridge
-	//	 err = driver.ovsdber.addOvsVethPort(local.Name, bridgeName, 0)
-	//	if err != nil {
-	//		log.Debugf("error attaching veth [ %s ] to bridge [ %s ]", local.Name, bridgeName)
-	//		errorResponsef(w, "%s", err)
-	//	}
-
 	err = driver.addPortExec(bridgeName, local.Name)
 	if err != nil {
 		log.Errorf("error attaching veth [ %s ] to bridge [ %s ]", local.Name, bridgeName)
@@ -374,16 +373,8 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	res := &joinResponse{
 		InterfaceNames: []*iface{ifname},
-		Gateway:        gatewayIP,
+		Gateway:        driver.pluginConfig.gatewayIP.String(),
 	}
-	// Add Connected Route
-	routeToDNS := &staticRoute{
-		Destination: bridgeSubnet,
-		RouteType:   types.CONNECTED,
-		NextHop:     "",
-		InterfaceID: 0,
-	}
-	res.StaticRoutes = []*staticRoute{routeToDNS}
 
 	objectResponse(w, res)
 	log.Debugf("Join endpoint %s:%s to %s", j.NetworkID, j.EndpointID, j.SandboxKey)
