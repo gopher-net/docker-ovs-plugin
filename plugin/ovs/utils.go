@@ -41,8 +41,8 @@ func getIfaceAddr(name string) (*net.IPNet, error) {
 func (driver *driver) setInterfaceIP(name string, rawIP string) error {
 	iface, err := netlink.LinkByName(name)
 	if err != nil {
-		log.Debugf("error retrieving new OVS bridge link [ %s ] likely sync between ovs and netlink, retrying in 1 second..", bridgeName)
-		time.Sleep(1 * time.Second)
+		log.Debugf("error retrieving new OVS bridge link [ %s ] likely a race issue between ovs and netlink, retrying in 1 second..", bridgeName)
+		time.Sleep(2 * time.Second)
 		iface, err = netlink.LinkByName(name)
 		if err != nil {
 			log.Errorf("Error retrieving the new OVS bridge from netlink: %s", err)
@@ -57,7 +57,7 @@ func (driver *driver) setInterfaceIP(name string, rawIP string) error {
 	return netlink.AddrAdd(iface, addr)
 }
 
-// Increment a subnet
+// Increment an IP in a subnet
 func ipIncrement(networkAddr net.IP) net.IP {
 	for i := 15; i >= 0; i-- {
 		b := networkAddr[i]
