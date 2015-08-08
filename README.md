@@ -31,7 +31,7 @@ The quickstart instructions describe how to start the plugin in **nat mode**. Fl
 3. Start Docker with the following:
 	
 	```
-	$sudo docker -d --default-network=ovs:ovsbr-docker0`
+	$sudo docker -d --default-network=ovs:ovsbr-docker0
 	```
  
  	Or edit the default configuration (e.g `/etc/default/docker`) and restart the service
