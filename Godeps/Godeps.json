@@ -1,0 +1,79 @@
+{
+	"ImportPath": "github.com/gopher-net/docker-ovs-plugin",
+	"GoVersion": "go1.4.2",
+	"Packages": [
+		"./..."
+	],
+	"Deps": [
+		{
+			"ImportPath": "github.com/Sirupsen/logrus",
+			"Comment": "v0.6.4-12-g467d9d5",
+			"Rev": "467d9d55c2d2c17248441a8fc661561161f40d5e"
+		},
+		{
+			"ImportPath": "github.com/cenkalti/hub",
+			"Comment": "v1.0.0-14-g57d753b",
+			"Rev": "57d753b5f4856e77b3cf8ecce78c97215a7d324d"
+		},
+		{
+			"ImportPath": "github.com/cenkalti/rpc2",
+			"Rev": "2d1be381ce47537e9e076b2b76dc70933162e4e9"
+		},
+		{
+			"ImportPath": "github.com/codegangsta/cli",
+			"Comment": "1.2.0-137-gbca61c4",
+			"Rev": "bca61c476e3c752594983e4c9bcd5f62fb09f157"
+		},
+		{
+			"ImportPath": "github.com/docker/docker/pkg/units",
+			"Comment": "v1.4.1-4106-g637023a",
+			"Rev": "637023a5f8d8347a0e271c09d5c9bc84fbc97693"
+		},
+		{
+			"ImportPath": "github.com/docker/libnetwork/ipallocator",
+			"Comment": "v0.2-357-g9584da3",
+			"Rev": "9584da3e16ca1d84f0958a6820138cdb61444a42"
+		},
+		{
+			"ImportPath": "github.com/docker/libnetwork/iptables",
+			"Comment": "v0.2-357-g9584da3",
+			"Rev": "9584da3e16ca1d84f0958a6820138cdb61444a42"
+		},
+		{
+			"ImportPath": "github.com/docker/libnetwork/netutils",
+			"Comment": "v0.2-357-g9584da3",
+			"Rev": "9584da3e16ca1d84f0958a6820138cdb61444a42"
+		},
+		{
+			"ImportPath": "github.com/docker/libnetwork/types",
+			"Comment": "v0.2-357-g9584da3",
+			"Rev": "9584da3e16ca1d84f0958a6820138cdb61444a42"
+		},
+		{
+			"ImportPath": "github.com/godbus/dbus",
+			"Comment": "v2-3-g4160802",
+			"Rev": "41608027bdce7bfa8959d653a00b954591220e67"
+		},
+		{
+			"ImportPath": "github.com/gorilla/context",
+			"Rev": "215affda49addc4c8ef7e2534915df2c8c35c6cd"
+		},
+		{
+			"ImportPath": "github.com/gorilla/mux",
+			"Rev": "8096f47503459bcc74d1f4c487b7e6e42e5746b5"
+		},
+		{
+			"ImportPath": "github.com/samalba/dockerclient",
+			"Rev": "5ba36c1ad5b75c34be407bfaac51bd02ccb8c654"
+		},
+		{
+			"ImportPath": "github.com/socketplane/libovsdb",
+			"Comment": "v0.1-2-g58cf012",
+			"Rev": "58cf01279880d621a67c5f929af9ed59ab409373"
+		},
+		{
+			"ImportPath": "github.com/vishvananda/netlink",
+			"Rev": "4b5dce31de6d42af5bb9811c6d265472199e0fec"
+		}
+	]
+}
