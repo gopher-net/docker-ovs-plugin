@@ -133,13 +133,15 @@ Since this plugin uses netlink for L3 IP assignments, a Linux host that can buil
 
 1. Install [Go](https://golang.org/doc/install). OVS as listed above and a kernel >= 3.19.
 
-2. Clone and start the OVS plugin:
+2. Install [godeps](https://github.com/tools/godep) by running `go get github.com/tools/godep`.
+
+3. Clone and start the OVS plugin:
 
     ```
     git clone https://github.com/gopher-net/docker-ovs-plugin.git
     cd docker-ovs-plugin/plugin
-    # Get the Go dependencies
-    go get ./...
+    # using godep restore will pull down the appropriate go dependencies
+    godep restore
     go run main.go
     # or using explicit configuration flags:
     go run main.go -d --gateway=172.18.40.1 --bridge-subnet=172.18.40.0/24 -mode=nat
