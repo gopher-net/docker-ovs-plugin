@@ -39,14 +39,21 @@ func getIfaceAddr(name string) (*net.IPNet, error) {
 
 // Set the IP addr of a netlink interface
 func (driver *driver) setInterfaceIP(name string, rawIP string) error {
+	var netlinkRetryTimer time.Duration
+	netlinkRetryTimer = 2
 	iface, err := netlink.LinkByName(name)
 	if err != nil {
-		log.Debugf("error retrieving new OVS bridge link [ %s ] likely a race issue between ovs and netlink, retrying in 1 second..", bridgeName)
-		time.Sleep(2 * time.Second)
+		log.Debugf("error retrieving new OVS bridge netlink link [ %s ] allowing another [ %d ] seconds for the host to finish creating it..", bridgeName, netlinkRetryTimer)
+		time.Sleep(netlinkRetryTimer * time.Second)
 		iface, err = netlink.LinkByName(name)
 		if err != nil {
-			log.Errorf("Error retrieving the new OVS bridge from netlink: %s", err)
-			return err
+			log.Debugf("error retrieving new OVS bridge netlink link [ %s ] allowing another [ %d ] seconds for the host to finish creating it..", bridgeName, netlinkRetryTimer)
+			time.Sleep(netlinkRetryTimer * time.Second)
+			iface, err = netlink.LinkByName(name)
+			if err != nil {
+				log.Fatalf("Abandoning retrieving the new OVS bridge link from netlink, Run [ ip link ] to troubleshoot the error: %s", err)
+				return err
+			}
 		}
 	}
 	ipNet, err := netlink.ParseIPNet(rawIP)
