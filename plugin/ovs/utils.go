@@ -78,3 +78,13 @@ func ipIncrement(networkAddr net.IP) net.IP {
 	}
 	return networkAddr
 }
+
+// Check if a netlink interface exists in the default namespace
+func validateIface(ifaceStr string) bool {
+	_, err := net.InterfaceByName(ifaceStr)
+	if err != nil {
+		log.Debugf("The requested interface [ %s ] was not found on the host: %s", ifaceStr, err)
+		return false
+	}
+	return true
+}

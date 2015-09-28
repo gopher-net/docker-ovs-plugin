@@ -31,23 +31,23 @@
 		},
 		{
 			"ImportPath": "github.com/docker/libnetwork/ipallocator",
-			"Comment": "v0.2-357-g9584da3",
-			"Rev": "9584da3e16ca1d84f0958a6820138cdb61444a42"
+			"Comment": "v0.2-484-g5395a29",
+			"Rev": "5395a29bd9ae5504aed5fb41d32941a1f80fe809"
 		},
 		{
 			"ImportPath": "github.com/docker/libnetwork/iptables",
-			"Comment": "v0.2-357-g9584da3",
-			"Rev": "9584da3e16ca1d84f0958a6820138cdb61444a42"
+			"Comment": "v0.2-484-g5395a29",
+			"Rev": "5395a29bd9ae5504aed5fb41d32941a1f80fe809"
 		},
 		{
 			"ImportPath": "github.com/docker/libnetwork/netutils",
-			"Comment": "v0.2-357-g9584da3",
-			"Rev": "9584da3e16ca1d84f0958a6820138cdb61444a42"
+			"Comment": "v0.2-484-g5395a29",
+			"Rev": "5395a29bd9ae5504aed5fb41d32941a1f80fe809"
 		},
 		{
 			"ImportPath": "github.com/docker/libnetwork/types",
-			"Comment": "v0.2-357-g9584da3",
-			"Rev": "9584da3e16ca1d84f0958a6820138cdb61444a42"
+			"Comment": "v0.2-484-g5395a29",
+			"Rev": "5395a29bd9ae5504aed5fb41d32941a1f80fe809"
 		},
 		{
 			"ImportPath": "github.com/godbus/dbus",
@@ -73,7 +73,7 @@
 		},
 		{
 			"ImportPath": "github.com/vishvananda/netlink",
-			"Rev": "4b5dce31de6d42af5bb9811c6d265472199e0fec"
+			"Rev": "b8d3e51d2a985af316ce499e328f530f0f6e37a1"
 		}
 	]
 }

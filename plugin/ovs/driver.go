@@ -52,6 +52,7 @@ func (driver *driver) Listen(socket string) error {
 
 	router.Methods("GET").Path("/status").HandlerFunc(driver.status)
 	router.Methods("POST").Path("/Plugin.Activate").HandlerFunc(driver.handshake)
+	router.Methods("POST").Path("/NetworkDriver.GetCapabilities").HandlerFunc(driver.capabilities)
 
 	handleMethod := func(method string, h http.HandlerFunc) {
 		router.Methods("POST").Path(fmt.Sprintf("/%s.%s", MethodReceiver, method)).HandlerFunc(h)
@@ -79,7 +80,7 @@ func (driver *driver) Listen(socket string) error {
 }
 
 func notFound(w http.ResponseWriter, r *http.Request) {
-	log.Warnf("[plugin] Not found: %+v", r)
+	log.Warnf("plugin Not found: [ %+v ]", r)
 	http.NotFound(w, r)
 }
 
@@ -119,6 +120,22 @@ func (driver *driver) handshake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Debug("Handshake completed")
+}
+
+type capabilitiesResp struct {
+	Scope string
+}
+
+func (driver *driver) capabilities(w http.ResponseWriter, r *http.Request) {
+	err := json.NewEncoder(w).Encode(&capabilitiesResp{
+		"local",
+	})
+	if err != nil {
+		log.Fatalf("capabilities encode: %s", err)
+		sendError(w, "encode error", http.StatusInternalServerError)
+		return
+	}
+	log.Debug("Capabilities exchange complete")
 }
 
 func (driver *driver) status(w http.ResponseWriter, r *http.Request) {
@@ -176,20 +193,25 @@ func (driver *driver) deleteNetwork(w http.ResponseWriter, r *http.Request) {
 type endpointCreate struct {
 	NetworkID  string
 	EndpointID string
-	Interfaces []*iface
+	Interface  *EndpointInterface
 	Options    map[string]interface{}
 }
 
-type iface struct {
-	ID         int
-	SrcName    string
-	DstPrefix  string
-	Address    string
-	MacAddress string
+// EndpointInterface represents an interface endpoint.
+type EndpointInterface struct {
+	Address     string
+	AddressIPv6 string
+	MacAddress  string
+}
+
+type InterfaceName struct {
+	SrcName   string
+	DstName   string
+	DstPrefix string
 }
 
 type endpointResponse struct {
-	Interfaces []*iface
+	Interface EndpointInterface
 }
 
 func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
@@ -225,6 +247,7 @@ func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	endID := create.EndpointID
 
 	if netID != driver.network {
+		log.Warnf("Network not found, [ %s ], plugin restarts are currently unsupported until netid queries are added. Please restart the docker daemon and plugin", netID)
 		errorResponsef(w, "No such network %s", netID)
 		return
 	}
@@ -243,15 +266,16 @@ func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	bridgeMask := strings.Split(driver.pluginConfig.brSubnet.String(), "/")
 	containerAddress := allocatedIP.String() + "/" + bridgeMask[1]
 
-	log.Infof("Dynamically allocated container IP is: [ %s ]", allocatedIP.String())
+	log.Infof("Allocated container IP: [ %s ]", allocatedIP.String())
 
-	respIface := &iface{
+	respIface := &EndpointInterface{
 		Address:    containerAddress,
 		MacAddress: mac,
 	}
 	resp := &endpointResponse{
-		Interfaces: []*iface{respIface},
+		Interface: *respIface,
 	}
+	log.Debugf("Create endpoint response: %+v", resp)
 	objectResponse(w, resp)
 
 	if driver.pluginConfig.mode == modeNAT {
@@ -282,7 +306,7 @@ func (driver *driver) deleteEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	// ReleaseIP releases an ip back to a network
 	if err := driver.ipAllocator.ReleaseIP(driver.cidr, driver.cidr.IP); err != nil {
-		log.Warnf("error releasing IP: %s", err)
+		log.Warnf("Error releasing IP: %s", err)
 	}
 	log.Debugf("Delete endpoint %s", delete.EndpointID)
 }
@@ -308,11 +332,9 @@ func (driver *driver) infoEndpoint(w http.ResponseWriter, r *http.Request) {
 }
 
 type joinInfo struct {
-	InterfaceNames []*iface
-	Gateway        string
-	GatewayIPv6    string
-	HostsPath      string
-	ResolvConfPath string
+	InterfaceName *InterfaceName
+	Gateway       string
+	GatewayIPv6   string
 }
 
 type join struct {
@@ -326,15 +348,12 @@ type staticRoute struct {
 	Destination string
 	RouteType   int
 	NextHop     string
-	InterfaceID int
 }
 
 type joinResponse struct {
-	HostsPath      string
-	ResolvConfPath string
-	Gateway        string
-	InterfaceNames []*iface
-	StaticRoutes   []*staticRoute
+	Gateway       string
+	InterfaceName InterfaceName
+	StaticRoutes  []*staticRoute
 }
 
 func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
@@ -366,17 +385,16 @@ func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
 	log.Infof("Attached veth [ %s ] to bridge [ %s ]", local.Name, bridgeName)
 
 	// SrcName gets renamed to DstPrefix on the container iface
-	ifname := &iface{
+	ifname := &InterfaceName{
 		SrcName:   local.PeerName,
 		DstPrefix: containerEthName,
-		ID:        0,
 	}
 	res := &joinResponse{
-		InterfaceNames: []*iface{ifname},
-		Gateway:        driver.pluginConfig.gatewayIP.String(),
+		InterfaceName: *ifname,
+		Gateway:       driver.pluginConfig.gatewayIP.String(),
 	}
 
-	objectResponse(w, res)
+	defer objectResponse(w, res)
 	log.Debugf("Join endpoint %s:%s to %s", j.NetworkID, j.EndpointID, j.SandboxKey)
 }
 
