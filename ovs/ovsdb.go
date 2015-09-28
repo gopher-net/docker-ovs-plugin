@@ -82,9 +82,19 @@ func New(version string, ctx *cli.Context) (Driver, error) {
 	}
 
 	// initiate the ovsdb manager port binding
-	ovsdb, err := libovsdb.Connect(localhost, ovsdbPort)
-	if err != nil {
-		return nil, fmt.Errorf("could not connect to openvswitch on port [ %d ]: %s", ovsdbPort, err)
+	var ovsdb *libovsdb.OvsdbClient
+	retries := 3
+	for i := 0; i < retries; i++ {
+		ovsdb, err = libovsdb.Connect(localhost, ovsdbPort)
+		if err == nil {
+			break
+		}
+		log.Errorf("could not connect to openvswitch on port [ %d ]: %s. Retrying in 5 seconds", ovsdbPort, err)
+		time.Sleep(5 * time.Second)
+	}
+
+	if ovsdb == nil {
+		return nil, fmt.Errorf("could not connect to open vswitch")
 	}
 
 	// bind user defined flags to the plugin config
