@@ -5,9 +5,11 @@ docker-ovs-plugin
 
 The quickstart instructions describe how to start the plugin in **nat mode**. Flat mode is described in the `flat` mode section.
 
-1. Install the Docker experimental binary from the instructions at: [Docker Experimental](https://github.com/docker/docker/tree/master/experimental). (stop other docker instances)
-	- Quick Experimental Install: `wget -qO- https://experimental.docker.com/ | sh`
-1. Install and start Open vSwitch.
+**1.** Install the Docker experimental binary from the instructions at: [Docker Experimental](https://github.com/docker/docker/tree/master/experimental). (stop other docker instances)
+
+* For detailed instructions on installing kernel updates and versions of Ubuntu prior to 15.04 or the corresponding latest Debian hosts please see [gopher-net/ipvlan-docker-plugin](https://github.com/gopher-net/ipvlan-docker-plugin)
+
+**2.** Install and start Open vSwitch.
 
 	- *Using apt-get*
 
@@ -22,13 +24,13 @@ The quickstart instructions describe how to start the plugin in **nat mode**. Fl
 	$ sudo yum install openvswitch
 	$ sudo /sbin/service openvswitch start
 	```
-2. Add OVSDB manager listener:
+**3.** Add OVSDB manager listener:
 
 	```
 	$ sudo ovs-vsctl set-manager ptcp:6640
 	```
 
-3. Start Docker with the following:
+**4.** Start Docker with the following:
 	
 	```
 	$sudo docker -d --default-network=ovs:ovsbr-docker0
@@ -41,7 +43,7 @@ The quickstart instructions describe how to start the plugin in **nat mode**. Fl
  	# service docker restart
  	```
 	
-4. Next start the plugin. A pre-compiled x86_64 binary can be downloaded from the [binaries](https://github.com/gopher-net/docker-ovs-plugin/tree/master/binaries) directory. **Note:** Running inside a container is a todo, pop it into issues if you want to help contribute that.
+**5.** Next start the plugin. A pre-compiled x86_64 binary can be downloaded from the [binaries](https://github.com/gopher-net/docker-ovs-plugin/tree/master/binaries) directory. **Note:** Running inside a container is a todo, pop it into issues if you want to help contribute that.
 
 	```
 	$ wget -O ./docker-ovs-plugin https://github.com/gopher-net/docker-ovs-plugin/raw/master/binaries/docker-ovs-plugin-0.1-Linux-x86_64
@@ -59,7 +61,7 @@ The quickstart instructions describe how to start the plugin in **nat mode**. Fl
 
 	For debugging or just extra logs from the sausage factory, add the debug flag `./docker-ovs-plugin -d`
 
-5. Run some containers and verify they can ping one another with `docker run -it --rm busybox` or `docker run -it --rm ubuntu` etc, or any other docker images you prefer. Alternatively, paste a few dozen or more containers running in the background and watch the ports provision and de-provision in OVS with `docker run -itd busybox`
+**6.** Run some containers and verify they can ping one another with `docker run -it --rm busybox` or `docker run -it --rm ubuntu` etc, or any other docker images you prefer. Alternatively, paste a few dozen or more containers running in the background and watch the ports provision and de-provision in OVS with `docker run -itd busybox`
 
 	```
 	INFO[0000] Plugin configuration:
@@ -113,6 +115,7 @@ e0de2079-66f0-4279-a1c8-46ba0672426e
     ovs_version: "2.3.1"
 ```
 
+**Flat Mode Note:** Hosts will only be able to ping one another unless you add an ethernet interface to the `docker-ovsbr0` bridge with something like `ovs-vsctl add-port <bridge_name> <port_name>`. NAT mode will masquerade around that issue. It is an inherent hastle of bridges that is unavoidable. This is a reason bridgeless implementation [gopher-net/ipvlan-docker-plugin](https://github.com/gopher-net/ipvlan-docker-plugin) and [gopher-net/macvlan-docker-plugin](https://github.com/gopher-net/macvlan-docker-plugin) can be attractive.
 
 ### Additional Notes:
 

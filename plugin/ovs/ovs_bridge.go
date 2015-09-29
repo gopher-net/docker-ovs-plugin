@@ -8,6 +8,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/libnetwork/iptables"
 	"github.com/socketplane/libovsdb"
+	"time"
 )
 
 //  setupBridge If bridge does not exist create it.
@@ -29,12 +30,26 @@ func (driver *driver) setupBridge() error {
 		}
 	}
 
-	// Verify there is an IP on the netlink iface. If it is the gateway it is a problem.
-	brNet, err := getIfaceAddr(bridgeName)
-	if err != nil {
-		log.Warnf("No IP address found on bridge: [ %s ]: %s", bridgeName, err)
-	} else {
-		log.Debugf("IP address [ %s ] found on bridge: [ %s ]", brNet, bridgeName)
+	// bind CLI opts to the user config struct
+	if ok := validateIface(driver.bridgeName); !ok {
+		log.Infof("A Netlink link for the OVS bridge named [ %s ] not found, retrying in 2 seconds to allow OVS and netlink to synchronize..", driver.bridgeName)
+		time.Sleep(2 * time.Second)
+		if ok := validateIface(driver.bridgeName); !ok {
+			log.Infof("A Netlink link for the OVS bridge named [ %s ] not found, retrying in 3 seconds..", driver.bridgeName)
+			time.Sleep(3 * time.Second)
+		}
+		if ok := validateIface(driver.bridgeName); !ok {
+			log.Fatalf("A Netlink link for the OVS bridge named [ %s ] not found after 2 retries, verify OVS creates a linux "+
+				"link when bridges are created with 'ovs-vsctl add-br foo' and 'ip link show foo'", driver.bridgeName)
+		} else {
+			// Verify there is an IP on the netlink iface. If it is the gateway it is a problem.
+			brNet, err := getIfaceAddr(bridgeName)
+			if err != nil {
+				log.Warnf("No IP address found on bridge: [ %s ] that is not a problem if in flat mode: %s", bridgeName, err)
+			} else {
+				log.Debugf("IP address [ %s ] found on bridge: [ %s ]", brNet, bridgeName)
+			}
+		}
 	}
 	return nil
 }
