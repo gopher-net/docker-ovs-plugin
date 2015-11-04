@@ -7,8 +7,10 @@ plugin:
   stdin_open: true
   tty: true
   privileged: true
+  command: -d
 
 ovs:
   image: socketplane/openvswitch:2.3.2
-  cap_add: NET_ADMIN
+  cap_add: 
+    - NET_ADMIN
   net: host
