@@ -5,76 +5,50 @@ docker-ovs-plugin
 
 The quickstart instructions describe how to start the plugin in **nat mode**. Flat mode is described in the `flat` mode section.
 
-**1.** Install the Docker experimental binary from the instructions at: [Docker Experimental](https://github.com/docker/docker/tree/master/experimental). (stop other docker instances)
+**1.** Make sure you are using Docker 1.9 or later
 
-* For detailed instructions on installing kernel updates and versions of Ubuntu prior to 15.04 or the corresponding latest Debian hosts please see [gopher-net/ipvlan-docker-plugin](https://github.com/gopher-net/ipvlan-docker-plugin)
+**2.** You need to `modprobe openvswitch` on the machine where the Docker Daemon is located
 
-**2.** Install and start Open vSwitch.
+```
+$ docker-machine ssh default "sudo modprobe openvswitch"
+```
 
-	- *Using apt-get*
+**3.** Create the following `docker-compose.yml` file
 
-	```
-	$ sudo apt-get install openvswitch-switch 
-	$ sudo /etc/init.d/openvswitch-switch start
-	```
+```yaml
+plugin:
+  image: gopher-net/ovs-plugin
+  volumes:
+    - /run/docker/plugins:/run/docker/plugins
+    - /var/run/docker.sock:/var/run/docker.sock
+  net: host
+  stdin_open: true
+  tty: true
+  privileged: true
+  command: -d
 
-	- *Using yum*
+ovs:
+  image: socketplane/openvswitch:2.3.2
+  cap_add:
+    - NET_ADMIN
+  net: host
+```
 
-	```
-	$ sudo yum install openvswitch
-	$ sudo /sbin/service openvswitch start
-	```
-**3.** Add OVSDB manager listener:
+**4.** `docker-compose up -d`
 
-	```
-	$ sudo ovs-vsctl set-manager ptcp:6640
-	```
+**5.** Now you are ready to create a new network
 
-**4.** Start Docker with the following:
-	
-	```
-	$sudo docker -d --default-network=ovs:ovsbr-docker0
-	```
- 
- 	Or edit the default configuration (e.g `/etc/default/docker`) and restart the service
- 	```
- 	$ sudo su
- 	# echo 'DOCKER_OPTS="--default-network=ovs:ovsbr-docker0"' >> /etc/default/docker
- 	# service docker restart
- 	```
-	
-**5.** Next start the plugin. A pre-compiled x86_64 binary can be downloaded from the [binaries](https://github.com/gopher-net/docker-ovs-plugin/tree/master/binaries) directory. **Note:** Running inside a container is a todo, pop it into issues if you want to help contribute that.
+```
+$ docker network create -d ovs mynet
+```
 
-	```
-	$ wget -O ./docker-ovs-plugin https://github.com/gopher-net/docker-ovs-plugin/raw/master/binaries/docker-ovs-plugin-0.1-Linux-x86_64
-	$ chmod +x docker-ovs-plugin
-	$ ./docker-ovs-plugin
-	```
+**6.** Test it out!
 
-	Running the binary with no options is the same as running the following. Any of those fields can be customized, just make sure your gateway is on the same network/subnet as the specified bridge subnet.
+```
+$ docker run -itd --net=mynet --name=web nginx
 
-	```
-	$ ./docker-ovs-plugin   --gateway=172.18.40.1  --bridge-subnet=172.18.40.0/24  -mode=nat
-	```
-
-	If you pass a subnet but not a gateway, we currently make an assumption that the first usable address. For example, in the case of a /24 subnet the .1 on the network will be used)
-
-	For debugging or just extra logs from the sausage factory, add the debug flag `./docker-ovs-plugin -d`
-
-**6.** Run some containers and verify they can ping one another with `docker run -it --rm busybox` or `docker run -it --rm ubuntu` etc, or any other docker images you prefer. Alternatively, paste a few dozen or more containers running in the background and watch the ports provision and de-provision in OVS with `docker run -itd busybox`
-
-	```
-	INFO[0000] Plugin configuration:
-      container subnet: [172.18.40.0/24]
-        container gateway: [172.18.40.1]
-        bridge name: [ovsbr-docker0]
-        bridge mode: [nat]
-        mtu: [1450]
-	INFO[0000] OVS network driver initialized successfully
-	INFO[0005] Dynamically allocated container IP is: [ 172.18.40.2 ]
-	INFO[0005] Attached veth [ ovs-veth0-ac097 ] to bridge [ ovsbr-docker0 ]
-	INFO[0009] Deleted OVS port [ ovs-veth0-ac097 ] from bridge [ ovsbr-docker0 ]
-	```
+$ docker run -it --rm --net=mynet busybox wget -qO- http://web
+```
 
 ### Flat Mode
 
@@ -86,6 +60,8 @@ There are two generic modes, `flat` and `nat`. The default mode is `nat` since i
 ```
 $ docker-ovs-plugin --gateway=192.168.1.1 --bridge-subnet=192.168.1.0/24 -mode=flat
 ```
+
+You can also add these flags to the `command` section of your `docker-compose.yml`
 
 - Containers now start attached to an OVS bridge. It could be tagged or untagged but either way it is isolated and unable to communicate to anything outside of its bridge domain. In this case, you either add VXLAN tunnels to other bridges of the same bridge domain or add an `eth` interface to the bridge to allow access to the underlying network when traffic leaves the Docker host. To do so, you simply add the `eth` interface to the ovs bridge. Neither the bridge nor the eth interface need to have an IP address since traffic from the container is strictly L2. **Warning** if you are remoted into the physical host make sure you are not using an ethernet interface to attach to the bridge that is also your management interface since the eth interface no longer uses the IP address it had. The IP would need to be migrated to ovsbr-docker0 in this case. Allowing underlying network access to an OVS bridge can be done like so:
 
@@ -157,6 +133,15 @@ Since this plugin uses netlink for L3 IP assignments, a Linux host that can buil
  - Go compile times are very fast due to linking being done statically. In order to link the libraries, Go looks for source code in the `~/go/src/` directory.
  - Typically you would clone the project to a directory like so `go/src/github.com/gopher-net/docker-ovs-plugin/`. Go knows where to look for the root of the go code, binaries and pkgs based on the `$GOPATH` shell ENV.
  - For example, you would clone to the path `/home/<username>/go/src/github.com/gopher-net/docker-ovs-plugin/` and put `export GOPATH=/home/<username>/go` in wherever you store your persistent ENVs in places like `~/.bashrc`, `~/.profile` or `~/.bash_profile` depending on the OS and system configuration.
+
+
+#### Trying it out
+
+If you want to try out some of your changes with your local docker install
+
+- `docker-compose -f dev.yml up -d`
+
+This will start Open vSwitch and the plugin running inside a container!
 
 ### Thanks
 
