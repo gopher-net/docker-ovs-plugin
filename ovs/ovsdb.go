@@ -3,14 +3,10 @@ package ovs
 import (
 	"errors"
 	"fmt"
-	"net"
 	"reflect"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/codegangsta/cli"
-	"github.com/docker/libnetwork/ipallocator"
-	"github.com/samalba/dockerclient"
 	"github.com/socketplane/libovsdb"
 )
 
@@ -20,8 +16,6 @@ const (
 	contextKey   = "container_id"
 	contextValue = "container_data"
 	minMTU       = 68
-	modeFlat     = "flat" // L2 driver mode
-	modeNAT      = "nat"  // NAT hides backend bridge network
 )
 
 var (
@@ -69,121 +63,10 @@ func (ovsdber *ovsdber) initDBCache() {
 	populateContextCache(ovsdber.ovsdb)
 
 	// async monitoring of the ovs bridge(s) for table updates
-	go ovsdber.monitorDockerBridge(bridgeName)
+	go ovsdber.monitorBridges()
 	for ovsdber.getRootUUID() == "" {
 		time.Sleep(time.Second * 1)
 	}
-}
-
-func New(version string, ctx *cli.Context) (Driver, error) {
-	docker, err := dockerclient.NewDockerClient("unix:///var/run/docker.sock", nil)
-	if err != nil {
-		return nil, fmt.Errorf("could not connect to docker: %s", err)
-	}
-
-	// initiate the ovsdb manager port binding
-	var ovsdb *libovsdb.OvsdbClient
-	retries := 3
-	for i := 0; i < retries; i++ {
-		ovsdb, err = libovsdb.Connect(localhost, ovsdbPort)
-		if err == nil {
-			break
-		}
-		log.Errorf("could not connect to openvswitch on port [ %d ]: %s. Retrying in 5 seconds", ovsdbPort, err)
-		time.Sleep(5 * time.Second)
-	}
-
-	if ovsdb == nil {
-		return nil, fmt.Errorf("could not connect to open vswitch")
-	}
-
-	// bind user defined flags to the plugin config
-	if ctx.String("bridge-name") != "" {
-		bridgeName = ctx.String("bridge-name")
-	}
-
-	// lower bound of v4 MTU is 68-bytes per rfc791
-	if ctx.Int("mtu") >= minMTU {
-		defaultMTU = ctx.Int("mtu")
-	} else {
-		log.Fatalf("The MTU value passed [ %d ] must be greater then [ %d ] bytes per rfc791", ctx.Int("mtu"), minMTU)
-	}
-
-	// Parse the container subnet
-	containerGW, containerCidr, err := net.ParseCIDR(ctx.String("bridge-subnet"))
-	if err != nil {
-		log.Fatalf("Error parsing cidr from the subnet flag provided [ %s ]: %s", FlagBridgeSubnet, err)
-	}
-
-	// Update the cli.go global var with the network if user provided
-	bridgeSubnet = containerCidr.String()
-
-	switch ctx.String("mode") {
-	/* [ flat ] mode */
-	//Flat mode requires a gateway IP address is used just like any other
-	//normal L2 domain. If no gateway is specified, we attempt to guess using
-	//the first usable IP on the container subnet from the CLI argument.
-	//Example "192.168.1.0/24" we guess at a gatway of "192.168.1.1".
-	//Flat mode requires a bridge-subnet flag with a subnet from your existing network
-	case modeFlat:
-		ovsDriverMode = modeFlat
-		if ctx.String("gateway") != "" {
-			// bind the container gateway to the IP passed from the CLI
-			cliGateway := net.ParseIP(ctx.String("gateway"))
-			if cliGateway == nil {
-				log.Fatalf("The IP passed with the [ gateway ] flag [ %s ] was not a valid address: %s", FlagGateway.Value, err)
-			}
-			containerGW = cliGateway
-		} else {
-			// if no gateway was passed, guess the first valid address on the container subnet
-			containerGW = ipIncrement(containerGW)
-		}
-	/* [ nat ] mode */
-	//If creating a private network that will be NATed on the OVS bridge via IPTables
-	//it is not required to pass a subnet since in a single host scenario it is hidden
-	//from the network once it is masqueraded via IP tables.
-	case modeNAT, "":
-		ovsDriverMode = modeNAT
-		if ctx.String("gateway") != "" {
-			// bind the container gateway to the IP passed from the CLI
-			cliGateway := net.ParseIP(ctx.String("gateway"))
-			if cliGateway == nil {
-				log.Fatalf("The IP passed with the [ gateway ] flag [ %s ] was not a valid address: %s", FlagGateway.Value, err)
-			}
-			containerGW = cliGateway
-		} else {
-			// if no gateway was passed, guess the first valid address on the container subnet
-			containerGW = ipIncrement(containerGW)
-		}
-	default:
-		log.Fatalf("Invalid ovs mode supplied [ %s ]. The plugin currently supports two modes: [ %s ] or [ %s ]", ctx.String("mode"), modeFlat, modeNAT)
-	}
-
-	pluginOpts := &pluginConfig{
-		mtu:        defaultMTU,
-		bridgeName: bridgeName,
-		mode:       ovsDriverMode,
-		brSubnet:   containerCidr,
-		gatewayIP:  containerGW,
-	}
-	// Leaving as info for now. Change to debug eventually
-	log.Infof("Plugin configuration: \n %s", pluginOpts)
-
-	ipAllocator := ipallocator.New()
-	d := &driver{
-		dockerer: dockerer{
-			client: docker,
-		},
-		ovsdber: ovsdber{
-			ovsdb: ovsdb,
-		},
-		ipAllocator:  ipAllocator,
-		pluginConfig: *pluginOpts,
-		version:      version,
-	}
-	// Initialize ovsdb cache at rpc connection setup
-	d.ovsdber.initDBCache()
-	return d, nil
 }
 
 func populateContextCache(ovs *libovsdb.OvsdbClient) {
@@ -233,7 +116,7 @@ func (ovsdber *ovsdber) portExists(portName string) (bool, error) {
 	return true, nil
 }
 
-func (ovsdber *ovsdber) monitorDockerBridge(brName string) {
+func (ovsdber *ovsdber) monitorBridges() {
 	for {
 		select {
 		case currUpdate := <-update:
@@ -245,9 +128,7 @@ func (ovsdber *ovsdber) monitorDockerBridge(brName string) {
 							oldRow := row.Old
 							if _, ok := oldRow.Fields["name"]; ok {
 								name := oldRow.Fields["name"].(string)
-								if name == brName {
-									ovsdber.createOvsdbBridge(name)
-								}
+								ovsdber.createOvsdbBridge(name)
 							}
 						}
 					}
@@ -278,14 +159,4 @@ func populateCache(updates libovsdb.TableUpdates) {
 			}
 		}
 	}
-}
-
-// return string representation of pluginConfig for debugging
-func (d *pluginConfig) String() string {
-	str := fmt.Sprintf(" container subnet: [%s]\n", d.brSubnet.String())
-	str = str + fmt.Sprintf("    container gateway: [%s]\n", d.gatewayIP.String())
-	str = str + fmt.Sprintf("    bridge name: [%s]\n", d.bridgeName)
-	str = str + fmt.Sprintf("    bridge mode: [%s]\n", d.mode)
-	str = str + fmt.Sprintf("    mtu: [%d]", d.mtu)
-	return str
 }

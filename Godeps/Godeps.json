@@ -1,14 +1,14 @@
 {
 	"ImportPath": "github.com/gopher-net/docker-ovs-plugin",
-	"GoVersion": "go1.4.2",
+	"GoVersion": "go1.4.3",
 	"Packages": [
 		"./..."
 	],
 	"Deps": [
 		{
 			"ImportPath": "github.com/Sirupsen/logrus",
-			"Comment": "v0.6.4-12-g467d9d5",
-			"Rev": "467d9d55c2d2c17248441a8fc661561161f40d5e"
+			"Comment": "v0.8.7",
+			"Rev": "418b41d23a1bf978c06faea5313ba194650ac088"
 		},
 		{
 			"ImportPath": "github.com/cenkalti/hub",
@@ -21,50 +21,47 @@
 		},
 		{
 			"ImportPath": "github.com/codegangsta/cli",
-			"Comment": "1.2.0-137-gbca61c4",
-			"Rev": "bca61c476e3c752594983e4c9bcd5f62fb09f157"
+			"Comment": "1.2.0",
+			"Rev": "565493f259bf868adb54d45d5f4c68d405117adf"
+		},
+		{
+			"ImportPath": "github.com/docker/docker/pkg/listenbuffer",
+			"Comment": "v1.9.1",
+			"Rev": "a34a1d598c6096ed8b5ce5219e77d68e5cd85462"
+		},
+		{
+			"ImportPath": "github.com/docker/docker/pkg/sockets",
+			"Comment": "v1.9.1",
+			"Rev": "a34a1d598c6096ed8b5ce5219e77d68e5cd85462"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/units",
-			"Comment": "v1.4.1-4106-g637023a",
-			"Rev": "637023a5f8d8347a0e271c09d5c9bc84fbc97693"
-		},
-		{
-			"ImportPath": "github.com/docker/libnetwork/ipallocator",
-			"Comment": "v0.2-484-g5395a29",
-			"Rev": "5395a29bd9ae5504aed5fb41d32941a1f80fe809"
+			"Comment": "v1.9.1",
+			"Rev": "a34a1d598c6096ed8b5ce5219e77d68e5cd85462"
 		},
 		{
 			"ImportPath": "github.com/docker/libnetwork/iptables",
-			"Comment": "v0.2-484-g5395a29",
-			"Rev": "5395a29bd9ae5504aed5fb41d32941a1f80fe809"
-		},
-		{
-			"ImportPath": "github.com/docker/libnetwork/netutils",
-			"Comment": "v0.2-484-g5395a29",
-			"Rev": "5395a29bd9ae5504aed5fb41d32941a1f80fe809"
-		},
-		{
-			"ImportPath": "github.com/docker/libnetwork/types",
-			"Comment": "v0.2-484-g5395a29",
-			"Rev": "5395a29bd9ae5504aed5fb41d32941a1f80fe809"
+			"Comment": "v0.5-30-g04cc1fa",
+			"Rev": "04cc1fa0a89f8c407b7be8cab883d4b17531ea7d"
 		},
 		{
 			"ImportPath": "github.com/godbus/dbus",
-			"Comment": "v2-3-g4160802",
-			"Rev": "41608027bdce7bfa8959d653a00b954591220e67"
+			"Comment": "v3-2-g9055aba",
+			"Rev": "9055aba822f5d54b1cb3e124336499648cb5d3c5"
 		},
 		{
-			"ImportPath": "github.com/gorilla/context",
-			"Rev": "215affda49addc4c8ef7e2534915df2c8c35c6cd"
+			"ImportPath": "github.com/gopher-net/dknet",
+			"Comment": "v0.1",
+			"Rev": "72c72f2ceb6e28f1a6b622e2095f35c2d040d033"
 		},
 		{
-			"ImportPath": "github.com/gorilla/mux",
-			"Rev": "8096f47503459bcc74d1f4c487b7e6e42e5746b5"
+			"ImportPath": "github.com/opencontainers/runc/libcontainer/user",
+			"Comment": "v0.0.5-6-g3601547",
+			"Rev": "36015470c2c398113c2eb54042681f34404457b2"
 		},
 		{
 			"ImportPath": "github.com/samalba/dockerclient",
-			"Rev": "5ba36c1ad5b75c34be407bfaac51bd02ccb8c654"
+			"Rev": "82381805d3533c97cec74e1cc79b00ef45774571"
 		},
 		{
 			"ImportPath": "github.com/socketplane/libovsdb",
@@ -73,7 +70,7 @@
 		},
 		{
 			"ImportPath": "github.com/vishvananda/netlink",
-			"Rev": "b8d3e51d2a985af316ce499e328f530f0f6e37a1"
+			"Rev": "a57a12c1b1d8aa37cf2f9da4fa7657b1f1fed88c"
 		}
 	]
 }

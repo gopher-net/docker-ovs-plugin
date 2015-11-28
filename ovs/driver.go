@@ -1,401 +1,222 @@
 package ovs
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
 	"strings"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/ipallocator"
-	"github.com/gorilla/mux"
+	"github.com/gopher-net/dknet"
+	"github.com/samalba/dockerclient"
+	"github.com/socketplane/libovsdb"
 	"github.com/vishvananda/netlink"
 )
 
 const (
-	MethodReceiver   = "NetworkDriver"
 	defaultRoute     = "0.0.0.0/0"
 	ovsPortPrefix    = "ovs-veth0-"
+	bridgePrefix     = "ovsbr-"
 	containerEthName = "eth"
+
+	mtuOption           = "net.gopher.ovs.bridge.mtu"
+	modeOption          = "net.gopher.ovs.bridge.mode"
+	bridgeNameOption    = "net.gopher.ovs.bridge.name"
+	bindInterfaceOption = "net.gopher.ovs.bridge.bind_interface"
+
+	modeNAT  = "nat"
+	modeFlat = "flat"
+
+	defaultMTU  = 1500
+	defaultMode = modeNAT
 )
 
-type Driver interface {
-	Listen(string) error
-}
+var (
+	validModes = map[string]bool{
+		modeNAT:  true,
+		modeFlat: true,
+	}
+)
 
-// Struct for binding plugin specific configurations (cli.go for details).
-type pluginConfig struct {
-	mtu        int
-	bridgeName string
-	mode       string
-	brSubnet   *net.IPNet
-	gatewayIP  net.IP
-}
-
-type driver struct {
+type Driver struct {
+	dknet.Driver
 	dockerer
 	ovsdber
-	ipAllocator *ipallocator.IPAllocator
-	version     string
-	network     string
-	cidr        *net.IPNet
-	nameserver  string
+	networks map[string]*NetworkState
 	OvsdbNotifier
-	pluginConfig
 }
 
-func (driver *driver) Listen(socket string) error {
-	router := mux.NewRouter()
-	router.NotFoundHandler = http.HandlerFunc(notFound)
+// NetworkState is filled in at network creation time
+// it contains state that we wish to keep for each network
+type NetworkState struct {
+	BridgeName        string
+	MTU               int
+	Mode              string
+	Gateway           string
+	GatewayMask       string
+	FlatBindInterface string
+}
 
-	router.Methods("GET").Path("/status").HandlerFunc(driver.status)
-	router.Methods("POST").Path("/Plugin.Activate").HandlerFunc(driver.handshake)
-	router.Methods("POST").Path("/NetworkDriver.GetCapabilities").HandlerFunc(driver.capabilities)
+func (d *Driver) CreateNetwork(r *dknet.CreateNetworkRequest) error {
+	log.Debugf("Create network request: %+v", r)
 
-	handleMethod := func(method string, h http.HandlerFunc) {
-		router.Methods("POST").Path(fmt.Sprintf("/%s.%s", MethodReceiver, method)).HandlerFunc(h)
-	}
-
-	handleMethod("CreateNetwork", driver.createNetwork)
-	handleMethod("DeleteNetwork", driver.deleteNetwork)
-	handleMethod("CreateEndpoint", driver.createEndpoint)
-	handleMethod("DeleteEndpoint", driver.deleteEndpoint)
-	handleMethod("EndpointOperInfo", driver.infoEndpoint)
-	handleMethod("Join", driver.joinEndpoint)
-	handleMethod("Leave", driver.leaveEndpoint)
-
-	var (
-		listener net.Listener
-		err      error
-	)
-
-	listener, err = net.Listen("unix", socket)
+	bridgeName, err := getBridgeName(r)
 	if err != nil {
 		return err
 	}
 
-	return http.Serve(listener, router)
-}
-
-func notFound(w http.ResponseWriter, r *http.Request) {
-	log.Warnf("plugin Not found: [ %+v ]", r)
-	http.NotFound(w, r)
-}
-
-func sendError(w http.ResponseWriter, msg string, code int) {
-	log.Errorf("%d %s", code, msg)
-	http.Error(w, msg, code)
-}
-
-func errorResponsef(w http.ResponseWriter, fmtString string, item ...interface{}) {
-	json.NewEncoder(w).Encode(map[string]string{
-		"Err": fmt.Sprintf(fmtString, item...),
-	})
-}
-
-func objectResponse(w http.ResponseWriter, obj interface{}) {
-	if err := json.NewEncoder(w).Encode(obj); err != nil {
-		sendError(w, "Could not JSON encode response", http.StatusInternalServerError)
-		return
-	}
-}
-
-func emptyResponse(w http.ResponseWriter) {
-	json.NewEncoder(w).Encode(map[string]string{})
-}
-
-type handshakeResp struct {
-	Implements []string
-}
-
-func (driver *driver) handshake(w http.ResponseWriter, r *http.Request) {
-	err := json.NewEncoder(w).Encode(&handshakeResp{
-		[]string{"NetworkDriver"},
-	})
+	mtu, err := getBridgeMTU(r)
 	if err != nil {
-		log.Fatalf("handshake encode: %s", err)
-		sendError(w, "encode error", http.StatusInternalServerError)
-		return
+		return err
 	}
-	log.Debug("Handshake completed")
-}
 
-type capabilitiesResp struct {
-	Scope string
-}
-
-func (driver *driver) capabilities(w http.ResponseWriter, r *http.Request) {
-	err := json.NewEncoder(w).Encode(&capabilitiesResp{
-		"local",
-	})
+	mode, err := getBridgeMode(r)
 	if err != nil {
-		log.Fatalf("capabilities encode: %s", err)
-		sendError(w, "encode error", http.StatusInternalServerError)
-		return
+		return err
 	}
-	log.Debug("Capabilities exchange complete")
-}
 
-func (driver *driver) status(w http.ResponseWriter, r *http.Request) {
-	io.WriteString(w, fmt.Sprintln("ovs plugin", driver.version))
-}
-
-type networkCreate struct {
-	NetworkID string
-	Options   map[string]interface{}
-}
-
-func (driver *driver) createNetwork(w http.ResponseWriter, r *http.Request) {
-	var create networkCreate
-	err := json.NewDecoder(r.Body).Decode(&create)
+	gateway, mask, err := getGatewayIP(r)
 	if err != nil {
-		sendError(w, "Unable to decode JSON payload: "+err.Error(), http.StatusBadRequest)
-		return
+		return err
 	}
 
-	if driver.network != "" {
-		errorResponsef(w, "You get just one network, and you already made %s", driver.network)
-		return
-	}
-	driver.network = create.NetworkID
-	driver.ipAllocator.RequestIP(driver.pluginConfig.brSubnet, nil)
-
-	emptyResponse(w)
-}
-
-type networkDelete struct {
-	NetworkID string
-}
-
-func (driver *driver) deleteNetwork(w http.ResponseWriter, r *http.Request) {
-	var delete networkDelete
-	if err := json.NewDecoder(r.Body).Decode(&delete); err != nil {
-		sendError(w, "Unable to decode JSON payload: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	log.Debugf("Delete network request: %+v", &delete)
-	if delete.NetworkID != driver.network {
-		log.Debugf("network not found: %+v", &delete)
-		errorResponsef(w, "Network %s not found", delete.NetworkID)
-		return
-	}
-	driver.network = ""
-	err := driver.deleteBridge(bridgeName)
+	bindInterface, err := getBindInterface(r)
 	if err != nil {
-		log.Errorf("Deleting bridge:[ %s ] and network:[ %s ] failed: %s", bridgeName, bridgeSubnet, err)
-	}
-	emptyResponse(w)
-	log.Infof("Destroy network %s", delete.NetworkID)
-}
-
-type endpointCreate struct {
-	NetworkID  string
-	EndpointID string
-	Interface  *EndpointInterface
-	Options    map[string]interface{}
-}
-
-// EndpointInterface represents an interface endpoint.
-type EndpointInterface struct {
-	Address     string
-	AddressIPv6 string
-	MacAddress  string
-}
-
-type InterfaceName struct {
-	SrcName   string
-	DstName   string
-	DstPrefix string
-}
-
-type endpointResponse struct {
-	Interface EndpointInterface
-}
-
-func (driver *driver) createEndpoint(w http.ResponseWriter, r *http.Request) {
-	var create endpointCreate
-	if err := json.NewDecoder(r.Body).Decode(&create); err != nil {
-		sendError(w, "Unable to decode JSON payload: "+err.Error(), http.StatusBadRequest)
-		return
+		return err
 	}
 
-	// If the bridge has been created, an OVSDB port table row should exist
-	exists, err := driver.ovsdber.portExists(bridgeName)
+	ns := &NetworkState{
+		BridgeName:        bridgeName,
+		MTU:               mtu,
+		Mode:              mode,
+		Gateway:           gateway,
+		GatewayMask:       mask,
+		FlatBindInterface: bindInterface,
+	}
+	d.networks[r.NetworkID] = ns
+
+	log.Debugf("Initializing bridge for network %s", r.NetworkID)
+	if err := d.initBridge(r.NetworkID); err != nil {
+		delete(d.networks, r.NetworkID)
+		return err
+	}
+	return nil
+}
+
+func (d *Driver) DeleteNetwork(r *dknet.DeleteNetworkRequest) error {
+	log.Debugf("Delete network request: %+v", r)
+	bridgeName := d.networks[r.NetworkID].BridgeName
+	log.Debugf("Deleting Bridge %s", bridgeName)
+	err := d.deleteBridge(bridgeName)
 	if err != nil {
-		log.Debugf("Error querying the ovsdb cache: %s", err)
+		log.Errorf("Deleting bridge %s failed: %s", bridgeName, err)
+		return err
 	}
-
-	// If the bridge does not exist create and assign an IP
-	if !exists {
-		err := driver.setupBridge()
-		if err != nil {
-			log.Errorf("unable to setup the OVS bridge [ %s ]: %s ", bridgeName, err)
-		}
-	} else {
-		log.Debugf("OVS bridge [ %s ] already exists, verifying its configuration.", bridgeName)
-		driver.verifyBridgeIp()
-	}
-
-	// Bring the bridge up
-	err = driver.interfaceUP(bridgeName)
-	if err != nil {
-		log.Warnf("Error enabling  bridge IP: [ %s ]", err)
-	}
-	netID := create.NetworkID
-	endID := create.EndpointID
-
-	if netID != driver.network {
-		log.Warnf("Network not found, [ %s ], plugin restarts are currently unsupported until netid queries are added. Please restart the docker daemon and plugin", netID)
-		errorResponsef(w, "No such network %s", netID)
-		return
-	}
-	// Request an IP address from libnetwork based on the cidr scope
-	// TODO: Add a user defined static ip addr option
-	allocatedIP, err := driver.ipAllocator.RequestIP(driver.pluginConfig.brSubnet, nil)
-	if err != nil || allocatedIP == nil {
-		log.Errorf("Unable to obtain an IP address from libnetwork ipam: %s", err)
-		errorResponsef(w, "%s", err)
-		return
-	}
-
-	// generate a mac address for the pending container
-	mac := makeMac(allocatedIP)
-	// Have to convert container IP to a string ip/mask format
-	bridgeMask := strings.Split(driver.pluginConfig.brSubnet.String(), "/")
-	containerAddress := allocatedIP.String() + "/" + bridgeMask[1]
-
-	log.Infof("Allocated container IP: [ %s ]", allocatedIP.String())
-
-	respIface := &EndpointInterface{
-		Address:    containerAddress,
-		MacAddress: mac,
-	}
-	resp := &endpointResponse{
-		Interface: *respIface,
-	}
-	log.Debugf("Create endpoint response: %+v", resp)
-	objectResponse(w, resp)
-
-	if driver.pluginConfig.mode == modeNAT {
-		err := driver.natOut()
-		if err != nil {
-			log.Errorf("Error setting NAT mode iptable rules for OVS bridge [ %s ]: %s ", driver.pluginConfig.mode, err)
-		}
-	}
-	log.Debugf("Create endpoint %s %+v", endID, resp)
+	delete(d.networks, r.NetworkID)
+	return nil
 }
 
-type endpointDelete struct {
-	NetworkID  string
-	EndpointID string
+func (d *Driver) CreateEndpoint(r *dknet.CreateEndpointRequest) error {
+	log.Debugf("Create endpoint request: %+v", r)
+	return nil
 }
 
-func (driver *driver) deleteEndpoint(w http.ResponseWriter, r *http.Request) {
-	var delete endpointDelete
-	if err := json.NewDecoder(r.Body).Decode(&delete); err != nil {
-		sendError(w, "Could not decode JSON encode payload", http.StatusBadRequest)
-		return
+func (d *Driver) DeleteEndpoint(r *dknet.DeleteEndpointRequest) error {
+	log.Debugf("Delete endpoint request: %+v", r)
+	return nil
+}
+
+func (d *Driver) EndpointInfo(r *dknet.InfoRequest) (*dknet.InfoResponse, error) {
+	res := &dknet.InfoResponse{
+		Value: make(map[string]string),
 	}
-	log.Debugf("Delete endpoint request: %+v", &delete)
-	emptyResponse(w)
-	// null check cidr in case driver restarted and doesnt know the network to avoid panic
-	if driver.cidr == nil {
-		return
-	}
-	// ReleaseIP releases an ip back to a network
-	if err := driver.ipAllocator.ReleaseIP(driver.cidr, driver.cidr.IP); err != nil {
-		log.Warnf("Error releasing IP: %s", err)
-	}
-	log.Debugf("Delete endpoint %s", delete.EndpointID)
+	return res, nil
 }
 
-type endpointInfoReq struct {
-	NetworkID  string
-	EndpointID string
-}
-
-type endpointInfo struct {
-	Value map[string]interface{}
-}
-
-func (driver *driver) infoEndpoint(w http.ResponseWriter, r *http.Request) {
-	var info endpointInfoReq
-	if err := json.NewDecoder(r.Body).Decode(&info); err != nil {
-		sendError(w, "Could not decode JSON encode payload", http.StatusBadRequest)
-		return
-	}
-	log.Debugf("Endpoint info request: %+v", &info)
-	objectResponse(w, &endpointInfo{Value: map[string]interface{}{}})
-	log.Debugf("Endpoint info %s", info.EndpointID)
-}
-
-type joinInfo struct {
-	InterfaceName *InterfaceName
-	Gateway       string
-	GatewayIPv6   string
-}
-
-type join struct {
-	NetworkID  string
-	EndpointID string
-	SandboxKey string
-	Options    map[string]interface{}
-}
-
-type staticRoute struct {
-	Destination string
-	RouteType   int
-	NextHop     string
-}
-
-type joinResponse struct {
-	Gateway       string
-	InterfaceName InterfaceName
-	StaticRoutes  []*staticRoute
-}
-
-func (driver *driver) joinEndpoint(w http.ResponseWriter, r *http.Request) {
-	var j join
-	if err := json.NewDecoder(r.Body).Decode(&j); err != nil {
-		sendError(w, "Could not decode JSON encode payload", http.StatusBadRequest)
-		return
-	}
-	log.Debugf("Join request: %+v", &j)
-
-	endID := j.EndpointID
+func (d *Driver) Join(r *dknet.JoinRequest) (*dknet.JoinResponse, error) {
 	// create and attach local name to the bridge
-	local := vethPair(endID[:5])
-	if err := netlink.LinkAdd(local); err != nil {
-		log.Errorf("failed to create the veth pair named: [ %v ] error: [ %s ] ", local, err)
-		errorResponsef(w, "could not create veth pair")
-		return
+	localVethPair := vethPair(truncateID(r.EndpointID))
+	if err := netlink.LinkAdd(localVethPair); err != nil {
+		log.Errorf("failed to create the veth pair named: [ %v ] error: [ %s ] ", localVethPair, err)
+		return nil, err
 	}
 	// Bring the veth pair up
-	err := netlink.LinkSetUp(local)
+	err := netlink.LinkSetUp(localVethPair)
 	if err != nil {
-		log.Warnf("Error enabling  Veth local iface: [ %v ]", local)
+		log.Warnf("Error enabling  Veth local iface: [ %v ]", localVethPair)
+		return nil, err
 	}
-	err = driver.addPortExec(bridgeName, local.Name)
+	bridgeName := d.networks[r.NetworkID].BridgeName
+	err = d.addOvsVethPort(bridgeName, localVethPair.Name, 0)
 	if err != nil {
-		log.Errorf("error attaching veth [ %s ] to bridge [ %s ]", local.Name, bridgeName)
-		errorResponsef(w, "%s", err)
+		log.Errorf("error attaching veth [ %s ] to bridge [ %s ]", localVethPair.Name, bridgeName)
+		return nil, err
 	}
-	log.Infof("Attached veth [ %s ] to bridge [ %s ]", local.Name, bridgeName)
+	log.Infof("Attached veth [ %s ] to bridge [ %s ]", localVethPair.Name, bridgeName)
 
-	// SrcName gets renamed to DstPrefix on the container iface
-	ifname := &InterfaceName{
-		SrcName:   local.PeerName,
-		DstPrefix: containerEthName,
+	// SrcName gets renamed to DstPrefix + ID on the container iface
+	res := &dknet.JoinResponse{
+		InterfaceName: dknet.InterfaceName{
+			SrcName:   localVethPair.PeerName,
+			DstPrefix: containerEthName,
+		},
+		Gateway: d.networks[r.NetworkID].Gateway,
 	}
-	res := &joinResponse{
-		InterfaceName: *ifname,
-		Gateway:       driver.pluginConfig.gatewayIP.String(),
+	log.Debugf("Join endpoint %s:%s to %s", r.NetworkID, r.EndpointID, r.SandboxKey)
+	return res, nil
+}
+
+func (d *Driver) Leave(r *dknet.LeaveRequest) error {
+	log.Debugf("Leave request: %+v", r)
+	localVethPair := vethPair(truncateID(r.EndpointID))
+	if err := netlink.LinkDel(localVethPair); err != nil {
+		log.Errorf("unable to delete veth on leave: %s", err)
+	}
+	portID := fmt.Sprintf(ovsPortPrefix + truncateID(r.EndpointID))
+	bridgeName := d.networks[r.NetworkID].BridgeName
+	err := d.ovsdber.deletePort(bridgeName, portID)
+	if err != nil {
+		log.Errorf("OVS port [ %s ] delete transaction failed on bridge [ %s ] due to: %s", portID, bridgeName, err)
+		return err
+	}
+	log.Infof("Deleted OVS port [ %s ] from bridge [ %s ]", portID, bridgeName)
+	log.Debugf("Leave %s:%s", r.NetworkID, r.EndpointID)
+	return nil
+}
+
+func NewDriver() (*Driver, error) {
+	docker, err := dockerclient.NewDockerClient("unix:///var/run/docker.sock", nil)
+	if err != nil {
+		return nil, fmt.Errorf("could not connect to docker: %s", err)
 	}
 
-	defer objectResponse(w, res)
-	log.Debugf("Join endpoint %s:%s to %s", j.NetworkID, j.EndpointID, j.SandboxKey)
+	// initiate the ovsdb manager port binding
+	var ovsdb *libovsdb.OvsdbClient
+	retries := 3
+	for i := 0; i < retries; i++ {
+		ovsdb, err = libovsdb.Connect(localhost, ovsdbPort)
+		if err == nil {
+			break
+		}
+		log.Errorf("could not connect to openvswitch on port [ %d ]: %s. Retrying in 5 seconds", ovsdbPort, err)
+		time.Sleep(5 * time.Second)
+	}
+
+	if ovsdb == nil {
+		return nil, fmt.Errorf("could not connect to open vswitch")
+	}
+
+	d := &Driver{
+		dockerer: dockerer{
+			client: docker,
+		},
+		ovsdber: ovsdber{
+			ovsdb: ovsdb,
+		},
+		networks: make(map[string]*NetworkState),
+	}
+	// Initialize ovsdb cache at rpc connection setup
+	d.ovsdber.initDBCache()
+	return d, nil
 }
 
 // Create veth pair. Peername is renamed to eth0 in the container
@@ -406,40 +227,96 @@ func vethPair(suffix string) *netlink.Veth {
 	}
 }
 
-type leave struct {
-	NetworkID  string
-	EndpointID string
-	Options    map[string]interface{}
-}
-
-func (driver *driver) leaveEndpoint(w http.ResponseWriter, r *http.Request) {
-	var l leave
-	if err := json.NewDecoder(r.Body).Decode(&l); err != nil {
-		sendError(w, "Could not decode JSON encode payload", http.StatusBadRequest)
-		return
-	}
-	log.Debugf("Leave request: %+v", &l)
-	local := vethPair(l.EndpointID[:5])
-	if err := netlink.LinkDel(local); err != nil {
-		log.Errorf("unable to delete veth on leave: %s", err)
-	}
-	portID := fmt.Sprintf(ovsPortPrefix + l.EndpointID[:5])
-	err := driver.ovsdber.deletePort(bridgeName, portID)
-	if err != nil {
-		log.Errorf("OVS port [ %s ] delete transaction failed on bridge [ %s ] due to: %s", portID, bridgeName, err)
-		return
-	}
-	log.Infof("Deleted OVS port [ %s ] from bridge [ %s ]", portID, bridgeName)
-	emptyResponse(w)
-	log.Debugf("Leave %s:%s", l.NetworkID, l.EndpointID)
-}
-
 // Enable a netlink interface
-func (driver *driver) interfaceUP(name string) error {
+func interfaceUp(name string) error {
 	iface, err := netlink.LinkByName(name)
 	if err != nil {
 		log.Debugf("Error retrieving a link named [ %s ]", iface.Attrs().Name)
 		return err
 	}
 	return netlink.LinkSetUp(iface)
+}
+
+func truncateID(id string) string {
+	return id[:5]
+}
+
+func getBridgeMTU(r *dknet.CreateNetworkRequest) (int, error) {
+	bridgeMTU := defaultMTU
+	if r.Options != nil {
+		if mtu, ok := r.Options[mtuOption].(int); ok {
+			bridgeMTU = mtu
+		}
+	}
+	return bridgeMTU, nil
+}
+
+func getBridgeName(r *dknet.CreateNetworkRequest) (string, error) {
+	bridgeName := bridgePrefix + truncateID(r.NetworkID)
+	if r.Options != nil {
+		if name, ok := r.Options[bridgeNameOption].(string); ok {
+			bridgeName = name
+		}
+	}
+	return bridgeName, nil
+}
+
+func getBridgeMode(r *dknet.CreateNetworkRequest) (string, error) {
+	bridgeMode := defaultMode
+	if r.Options != nil {
+		if mode, ok := r.Options[modeOption].(string); ok {
+			if _, isValid := validModes[mode]; !isValid {
+				return "", fmt.Errorf("%s is not a valid mode", mode)
+			}
+			bridgeMode = mode
+		}
+	}
+	return bridgeMode, nil
+}
+
+func getGatewayIP(r *dknet.CreateNetworkRequest) (string, string, error) {
+	// FIXME: Dear future self, I'm sorry for leaving you with this mess, but I want to get this working ASAP
+	// This should be an array
+	// We need to handle case where we have
+	// a. v6 and v4 - dual stack
+	// auxilliary address
+	// multiple subnets on one network
+	// also in that case, we'll need a function to determine the correct default gateway based on it's IP/Mask
+	var gatewayIP string
+
+	if len(r.IPv6Data) > 0 {
+		if r.IPv6Data[0] != nil {
+			if r.IPv6Data[0].Gateway != "" {
+				gatewayIP = r.IPv6Data[0].Gateway
+			}
+		}
+	}
+	// Assumption: IPAM will provide either IPv4 OR IPv6 but not both
+	// We may want to modify this in future to support dual stack
+	if len(r.IPv4Data) > 0 {
+		if r.IPv4Data[0] != nil {
+			if r.IPv4Data[0].Gateway != "" {
+				gatewayIP = r.IPv4Data[0].Gateway
+			}
+		}
+	}
+
+	if gatewayIP == "" {
+		return "", "", fmt.Errorf("No gateway IP found")
+	}
+	parts := strings.Split(gatewayIP, "/")
+	if parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("Cannot split gateway IP address")
+	}
+	return parts[0], parts[1], nil
+}
+
+func getBindInterface(r *dknet.CreateNetworkRequest) (string, error) {
+	if r.Options != nil {
+		if mode, ok := r.Options[bindInterfaceOption].(string); ok {
+			return mode, nil
+		}
+	}
+	// As bind interface is optional and has no default, don't return an error
+	return "", nil
 }

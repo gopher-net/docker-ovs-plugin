@@ -38,23 +38,21 @@ func getIfaceAddr(name string) (*net.IPNet, error) {
 }
 
 // Set the IP addr of a netlink interface
-func (driver *driver) setInterfaceIP(name string, rawIP string) error {
-	var netlinkRetryTimer time.Duration
-	netlinkRetryTimer = 2
-	iface, err := netlink.LinkByName(name)
-	if err != nil {
-		log.Debugf("error retrieving new OVS bridge netlink link [ %s ] allowing another [ %d ] seconds for the host to finish creating it..", bridgeName, netlinkRetryTimer)
-		time.Sleep(netlinkRetryTimer * time.Second)
+func setInterfaceIP(name string, rawIP string) error {
+	retries := 2
+	var iface netlink.Link
+	var err error
+	for i := 0; i < retries; i++ {
 		iface, err = netlink.LinkByName(name)
-		if err != nil {
-			log.Debugf("error retrieving new OVS bridge netlink link [ %s ] allowing another [ %d ] seconds for the host to finish creating it..", bridgeName, netlinkRetryTimer)
-			time.Sleep(netlinkRetryTimer * time.Second)
-			iface, err = netlink.LinkByName(name)
-			if err != nil {
-				log.Fatalf("Abandoning retrieving the new OVS bridge link from netlink, Run [ ip link ] to troubleshoot the error: %s", err)
-				return err
-			}
+		if err == nil {
+			break
 		}
+		log.Debugf("error retrieving new OVS bridge netlink link [ %s ]... retrying", name)
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		log.Fatalf("Abandoning retrieving the new OVS bridge link from netlink, Run [ ip link ] to troubleshoot the error: %s", err)
+		return err
 	}
 	ipNet, err := netlink.ParseIPNet(rawIP)
 	if err != nil {
