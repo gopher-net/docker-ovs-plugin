@@ -3,81 +3,73 @@ package ovs
 import (
 	"errors"
 	"fmt"
-	"strings"
+
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/libnetwork/iptables"
 	"github.com/socketplane/libovsdb"
-	"time"
 )
 
 //  setupBridge If bridge does not exist create it.
-func (driver *driver) setupBridge() error {
-	if err := driver.ovsdber.addBridge(bridgeName); err != nil {
+func (d *Driver) initBridge(id string) error {
+	bridgeName := d.networks[id].BridgeName
+	if err := d.ovsdber.addBridge(bridgeName); err != nil {
 		log.Errorf("error creating ovs bridge [ %s ] : [ %s ]", bridgeName, err)
 		return err
 	}
 
-	// Set the L3 addr on the bridge's netlink iface if in NAT since it needs to masq
-	if driver.pluginConfig.mode == modeNAT {
-		// create a string representation of the bridge address in cidr form (ip/mask)
-		bridgeMask := strings.Split(driver.pluginConfig.brSubnet.String(), "/")
-		bridgeCidr := fmt.Sprintf("%s/%s", driver.pluginConfig.gatewayIP, bridgeMask[1])
-		// Set bridge IP.
-		err := driver.setInterfaceIP(bridgeName, bridgeCidr)
-		if err != nil {
-			log.Debugf("Error assigning address:[ %s ] on bridge:[ %s ]  with an error of: %s", bridgeCidr, bridgeName, err)
+	retries := 3
+	found := false
+	for i := 0; i < retries; i++ {
+		if found = validateIface(bridgeName); found {
+			break
 		}
+		log.Debugf("A link for the OVS bridge named [ %s ] not found, retrying in 2 seconds", bridgeName)
+		time.Sleep(2 * time.Second)
+	}
+	if found == false {
+		return fmt.Errorf("Could not find a link for the OVS bridge named %s", bridgeName)
+
 	}
 
-	// bind CLI opts to the user config struct
-	if ok := validateIface(driver.bridgeName); !ok {
-		log.Infof("A Netlink link for the OVS bridge named [ %s ] not found, retrying in 2 seconds to allow OVS and netlink to synchronize..", driver.bridgeName)
-		time.Sleep(2 * time.Second)
-		if ok := validateIface(driver.bridgeName); !ok {
-			log.Infof("A Netlink link for the OVS bridge named [ %s ] not found, retrying in 3 seconds..", driver.bridgeName)
-			time.Sleep(3 * time.Second)
-		}
-		if ok := validateIface(driver.bridgeName); !ok {
-			log.Fatalf("A Netlink link for the OVS bridge named [ %s ] not found after 2 retries, verify OVS creates a linux "+
-				"link when bridges are created with 'ovs-vsctl add-br foo' and 'ip link show foo'", driver.bridgeName)
-		} else {
-			// Verify there is an IP on the netlink iface. If it is the gateway it is a problem.
-			brNet, err := getIfaceAddr(bridgeName)
+	bridgeMode := d.networks[id].Mode
+	switch bridgeMode {
+	case modeNAT:
+		{
+			gatewayIP := d.networks[id].Gateway + "/" + d.networks[id].GatewayMask
+			if err := setInterfaceIP(bridgeName, gatewayIP); err != nil {
+				log.Debugf("Error assigning address: %s on bridge: %s with an error of: %s", gatewayIP, bridgeName, err)
+			}
+
+			// Validate that the IPAddress is there!
+			_, err := getIfaceAddr(bridgeName)
 			if err != nil {
-				log.Warnf("No IP address found on bridge: [ %s ] that is not a problem if in flat mode: %s", bridgeName, err)
-			} else {
-				log.Debugf("IP address [ %s ] found on bridge: [ %s ]", brNet, bridgeName)
+				log.Fatalf("No IP address found on bridge %s", bridgeName)
+				return err
+			}
+
+			// Add NAT rules for iptables
+			if err = natOut(gatewayIP); err != nil {
+				log.Fatalf("Could not set NAT rules for bridge %s", bridgeName)
+				return err
 			}
 		}
-	}
-	return nil
-}
 
-// verifyBridge is if the bridge already existed and ensures it has a netlink L3 IP
-func (driver *driver) verifyBridgeIp() error {
-	// Verify there is an IP on the bridge
-	brNet, err := getIfaceAddr(bridgeName)
-	if brNet != nil {
-		log.Debugf("IP address [ %s ] found on bridge: [ %s ]", brNet, bridgeName)
-		return nil
-	}
-
-	// Set the L3 addr on the bridge's netlink iface if in NAT since it needs to masq
-	if driver.pluginConfig.mode == modeNAT {
-		// create a string representation of the bridge address in cidr form (ip/mask)
-		bridgeMask := strings.Split(driver.pluginConfig.brSubnet.String(), "/")
-		bridgeCidr := fmt.Sprintf("%s/%s", driver.pluginConfig.gatewayIP, bridgeMask[1])
-
-		// Set bridge IP.
-		log.Debugf("Assigning IP address [ %s ] to bridge: [ %s ]", brNet, bridgeName)
-		err := driver.setInterfaceIP(bridgeName, bridgeCidr)
-		if err != nil {
-			log.Debugf("Error assigning address:[ %s ] on bridge:[ %s ]  with an error of: %s", bridgeCidr, bridgeName, err)
+	case modeFlat:
+		{
+			//ToDo: Add NIC to the bridge
 		}
 	}
 
-	return err
+	// Bring the bridge up
+	err := interfaceUp(bridgeName)
+	if err != nil {
+		log.Warnf("Error enabling bridge: [ %s ]", err)
+		return err
+	}
+
+	return nil
 }
 
 func (ovsdber *ovsdber) createBridgeIface(name string) error {
@@ -187,7 +179,7 @@ func (ovsdber *ovsdber) addBridge(bridgeName string) error {
 }
 
 // deleteBridge deletes the OVS bridge
-func (driver *driver) deleteBridge(bridgeName string) error {
+func (ovsdber *ovsdber) deleteBridge(bridgeName string) error {
 	namedBridgeUUID := "bridge"
 
 	// simple delete operation
@@ -212,7 +204,7 @@ func (driver *driver) deleteBridge(bridgeName string) error {
 	}
 
 	operations := []libovsdb.Operation{deleteOp, mutateOp}
-	reply, _ := driver.ovsdber.ovsdb.Transact("Open_vSwitch", operations...)
+	reply, _ := ovsdber.ovsdb.Transact("Open_vSwitch", operations...)
 
 	if len(reply) < len(operations) {
 		log.Error("Number of Replies should be atleast equal to number of Operations")
@@ -232,10 +224,10 @@ func (driver *driver) deleteBridge(bridgeName string) error {
 }
 
 // todo: reconcile with what libnetwork does and port mappings
-func (driver *driver) natOut() error {
+func natOut(cidr string) error {
 	masquerade := []string{
 		"POSTROUTING", "-t", "nat",
-		"-s", driver.pluginConfig.brSubnet.String(),
+		"-s", cidr,
 		"-j", "MASQUERADE",
 	}
 	if _, err := iptables.Raw(

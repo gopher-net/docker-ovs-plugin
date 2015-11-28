@@ -1,10 +1,8 @@
 package ovs
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"os/exec"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/socketplane/libovsdb"
@@ -201,15 +199,7 @@ func (ovsdber *ovsdber) addOvsVethPort(bridgeName string, portName string, tag u
 	// intf row to insert
 	intf := make(map[string]interface{})
 	intf["name"] = portName
-
-	status := make(map[string]string)
-	status["driver_name"] = "veth"
-	status["driver_version"] = "1.0"
-	statColumn, _ := libovsdb.NewOvsMap(status)
-	// bridge row to insert
-
-	intf["name"] = bridgeName
-	intf["status"] = statColumn
+	intf["type"] = `system`
 
 	insertIntfOp := libovsdb.Operation{
 		Op:       "insert",
@@ -217,6 +207,7 @@ func (ovsdber *ovsdber) addOvsVethPort(bridgeName string, portName string, tag u
 		Row:      intf,
 		UUIDName: namedIntfUUID,
 	}
+
 	// port row to insert
 	port := make(map[string]interface{})
 	port["name"] = portName
@@ -249,29 +240,12 @@ func (ovsdber *ovsdber) addOvsVethPort(bridgeName string, portName string, tag u
 	}
 	for i, o := range reply {
 		if o.Error != "" && i < len(operations) {
-			log.Error("Transaction Failed due to an error ]", o.Error, " details:", o.Details, " in ", operations[i])
+			msg := fmt.Sprintf("Transaction Failed due to an error ]", o.Error, " details:", o.Details, " in ", operations[i])
+			return errors.New(msg)
 		} else if o.Error != "" {
-			log.Warn("Transaction Failed due to an error :", o.Error)
+			msg := fmt.Sprintf("Transaction Failed due to an error :", o.Error)
+			return errors.New(msg)
 		}
-	}
-	return nil
-}
-
-func run(cmd string, arg ...string) (bytes.Buffer, bytes.Buffer, error) {
-	var stdout, stderr bytes.Buffer
-	command := exec.Command(cmd, arg...)
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	err := command.Run()
-	return stdout, stderr, err
-}
-
-// Temporary until addOvsVethPort works
-func (ovsdber *ovsdber) addPortExec(bridge string, port string) error {
-	_, stderr, err := run("ovs-vsctl", "add-port", bridge, port)
-	if err != nil {
-		errmsg := stderr.String()
-		return errors.New(errmsg)
 	}
 	return nil
 }
