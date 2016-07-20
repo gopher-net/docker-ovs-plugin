@@ -17,7 +17,7 @@ $ docker-machine ssh default "sudo modprobe openvswitch"
 
 ```yaml
 plugin:
-  image: gopher-net/ovs-plugin
+  image: gophernet/ovs-plugin
   volumes:
     - /run/docker/plugins:/run/docker/plugins
     - /var/run/docker.sock:/var/run/docker.sock
