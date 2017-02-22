@@ -6,13 +6,14 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/gopher-net/dknet"
+	networkplugin "github.com/docker/go-plugins-helpers/network"
 	"github.com/samalba/dockerclient"
 	"github.com/socketplane/libovsdb"
-	"github.com/vishvananda/netlink"
+	"github.com/vishvananda/netlink"	 
 )
 
 const (
+	DriverName       = "ovs"
 	defaultRoute     = "0.0.0.0/0"
 	ovsPortPrefix    = "ovs-veth0-"
 	bridgePrefix     = "ovsbr-"
@@ -38,7 +39,6 @@ var (
 )
 
 type Driver struct {
-	dknet.Driver
 	dockerer
 	ovsdber
 	networks map[string]*NetworkState
@@ -56,7 +56,7 @@ type NetworkState struct {
 	FlatBindInterface string
 }
 
-func (d *Driver) CreateNetwork(r *dknet.CreateNetworkRequest) error {
+func (d *Driver) CreateNetwork(r *networkplugin.CreateNetworkRequest) error {
 	log.Debugf("Create network request: %+v", r)
 
 	bridgeName, err := getBridgeName(r)
@@ -102,7 +102,7 @@ func (d *Driver) CreateNetwork(r *dknet.CreateNetworkRequest) error {
 	return nil
 }
 
-func (d *Driver) DeleteNetwork(r *dknet.DeleteNetworkRequest) error {
+func (d *Driver) DeleteNetwork(r *networkplugin.DeleteNetworkRequest) error {
 	log.Debugf("Delete network request: %+v", r)
 	bridgeName := d.networks[r.NetworkID].BridgeName
 	log.Debugf("Deleting Bridge %s", bridgeName)
@@ -115,25 +115,64 @@ func (d *Driver) DeleteNetwork(r *dknet.DeleteNetworkRequest) error {
 	return nil
 }
 
-func (d *Driver) CreateEndpoint(r *dknet.CreateEndpointRequest) error {
+func (d *Driver) CreateEndpoint(r *networkplugin.CreateEndpointRequest) (*networkplugin.CreateEndpointResponse,error) {
 	log.Debugf("Create endpoint request: %+v", r)
+	localVethPair := vethPair(truncateID(r.EndpointID))
+	log.Debugf("Create vethPair")
+    	res := &networkplugin.CreateEndpointResponse{Interface: &networkplugin.EndpointInterface{MacAddress: localVethPair.Attrs().HardwareAddr.String()}}
+    	log.Debugf("Attached veth5 %+v," ,r.Interface)
+    	return res,nil
+}
+func (d *Driver) GetCapabilities () (*networkplugin.CapabilitiesResponse,error) {
+        log.Debugf("Get capabilities request")
+        res := &networkplugin.CapabilitiesResponse{
+                Scope:"local",
+        }
+        return res,nil
+}
+func (d *Driver) ProgramExternalConnectivity (r *networkplugin.ProgramExternalConnectivityRequest) error {
+        log.Debugf("Program External Connectivity  request: %+v", r)
 	return nil
 }
 
-func (d *Driver) DeleteEndpoint(r *dknet.DeleteEndpointRequest) error {
+func (d *Driver) RevokeExternalConnectivity (r *networkplugin.RevokeExternalConnectivityRequest) error {
+        log.Debugf("Revoke external connectivity request: %+v", r)
+        return nil
+}
+func (d *Driver) FreeNetwork (r *networkplugin.FreeNetworkRequest) error {
+        log.Debugf("Free network request: %+v", r)
+        return nil
+}
+func (d *Driver) DiscoverNew (r *networkplugin.DiscoveryNotification) error {
+        log.Debugf("Discover new request: %+v", r)
+        return nil
+}
+func (d *Driver) DiscoverDelete (r *networkplugin.DiscoveryNotification) error {
+        log.Debugf("Discover delete request: %+v", r)
+        return nil
+}
+func (d *Driver) DeleteEndpoint(r *networkplugin.DeleteEndpointRequest) error {
 	log.Debugf("Delete endpoint request: %+v", r)
 	return nil
 }
 
-func (d *Driver) EndpointInfo(r *dknet.InfoRequest) (*dknet.InfoResponse, error) {
-	res := &dknet.InfoResponse{
+func (d *Driver) AllocateNetwork(r *networkplugin.AllocateNetworkRequest) (*networkplugin.AllocateNetworkResponse,error) {
+        log.Debugf("Allocate network request: %+v", r)
+        res := &networkplugin.AllocateNetworkResponse{
+                Options: make(map[string]string),
+        }
+        return res,nil
+}
+func (d *Driver) EndpointInfo(r *networkplugin.InfoRequest) (*networkplugin.InfoResponse, error) {
+	res := &networkplugin.InfoResponse{
 		Value: make(map[string]string),
 	}
 	return res, nil
 }
 
-func (d *Driver) Join(r *dknet.JoinRequest) (*dknet.JoinResponse, error) {
+func (d *Driver) Join(r *networkplugin.JoinRequest) (*networkplugin.JoinResponse, error) {
 	// create and attach local name to the bridge
+	log.Debugf("Join request: %+v", r)
 	localVethPair := vethPair(truncateID(r.EndpointID))
 	if err := netlink.LinkAdd(localVethPair); err != nil {
 		log.Errorf("failed to create the veth pair named: [ %v ] error: [ %s ] ", localVethPair, err)
@@ -154,8 +193,8 @@ func (d *Driver) Join(r *dknet.JoinRequest) (*dknet.JoinResponse, error) {
 	log.Infof("Attached veth [ %s ] to bridge [ %s ]", localVethPair.Name, bridgeName)
 
 	// SrcName gets renamed to DstPrefix + ID on the container iface
-	res := &dknet.JoinResponse{
-		InterfaceName: dknet.InterfaceName{
+	res := &networkplugin.JoinResponse{
+		InterfaceName: networkplugin.InterfaceName{
 			SrcName:   localVethPair.PeerName,
 			DstPrefix: containerEthName,
 		},
@@ -165,7 +204,7 @@ func (d *Driver) Join(r *dknet.JoinRequest) (*dknet.JoinResponse, error) {
 	return res, nil
 }
 
-func (d *Driver) Leave(r *dknet.LeaveRequest) error {
+func (d *Driver) Leave(r *networkplugin.LeaveRequest) error {
 	log.Debugf("Leave request: %+v", r)
 	localVethPair := vethPair(truncateID(r.EndpointID))
 	if err := netlink.LinkDel(localVethPair); err != nil {
@@ -193,7 +232,8 @@ func NewDriver() (*Driver, error) {
 	var ovsdb *libovsdb.OvsdbClient
 	retries := 3
 	for i := 0; i < retries; i++ {
-		ovsdb, err = libovsdb.Connect(localhost, ovsdbPort)
+		//ovsdb, err = libovsdb.Connect(localhost, ovsdbPort)
+		ovsdb, err = libovsdb.ConnectWithUnixSocket("/var/run/openvswitch/db.sock")
 		if err == nil {
 			break
 		}
@@ -213,6 +253,28 @@ func NewDriver() (*Driver, error) {
 			ovsdb: ovsdb,
 		},
 		networks: make(map[string]*NetworkState),
+	}
+	//recover networks
+	netlist,err :=d.dockerer.client.ListNetworks("")
+	if err != nil {
+		return nil, fmt.Errorf("could not get  docker networks: %s", err)
+	}
+	for _, net := range  netlist{
+		if net.Driver  == DriverName{
+			netInspect,err:=d.dockerer.client.InspectNetwork(net.ID)
+			if err != nil {
+				return nil, fmt.Errorf("could not inpect docker networks inpect: %s", err)
+			}
+			bridgeName, err := getBridgeNamefromresource(netInspect)
+			if err != nil {
+				return nil,err
+			}
+			ns := &NetworkState{
+				BridgeName:        bridgeName,
+			}
+			d.networks[net.ID] = ns
+			log.Debugf("exist network by this driver:%v",netInspect.Name)
+		}
 	}
 	// Initialize ovsdb cache at rpc connection setup
 	d.ovsdber.initDBCache()
@@ -241,7 +303,7 @@ func truncateID(id string) string {
 	return id[:5]
 }
 
-func getBridgeMTU(r *dknet.CreateNetworkRequest) (int, error) {
+func getBridgeMTU(r *networkplugin.CreateNetworkRequest) (int, error) {
 	bridgeMTU := defaultMTU
 	if r.Options != nil {
 		if mtu, ok := r.Options[mtuOption].(int); ok {
@@ -251,7 +313,7 @@ func getBridgeMTU(r *dknet.CreateNetworkRequest) (int, error) {
 	return bridgeMTU, nil
 }
 
-func getBridgeName(r *dknet.CreateNetworkRequest) (string, error) {
+func getBridgeName(r *networkplugin.CreateNetworkRequest) (string, error) {
 	bridgeName := bridgePrefix + truncateID(r.NetworkID)
 	if r.Options != nil {
 		if name, ok := r.Options[bridgeNameOption].(string); ok {
@@ -261,7 +323,7 @@ func getBridgeName(r *dknet.CreateNetworkRequest) (string, error) {
 	return bridgeName, nil
 }
 
-func getBridgeMode(r *dknet.CreateNetworkRequest) (string, error) {
+func getBridgeMode(r *networkplugin.CreateNetworkRequest) (string, error) {
 	bridgeMode := defaultMode
 	if r.Options != nil {
 		if mode, ok := r.Options[modeOption].(string); ok {
@@ -274,7 +336,7 @@ func getBridgeMode(r *dknet.CreateNetworkRequest) (string, error) {
 	return bridgeMode, nil
 }
 
-func getGatewayIP(r *dknet.CreateNetworkRequest) (string, string, error) {
+func getGatewayIP(r *networkplugin.CreateNetworkRequest) (string, string, error) {
 	// FIXME: Dear future self, I'm sorry for leaving you with this mess, but I want to get this working ASAP
 	// This should be an array
 	// We need to handle case where we have
@@ -311,7 +373,7 @@ func getGatewayIP(r *dknet.CreateNetworkRequest) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-func getBindInterface(r *dknet.CreateNetworkRequest) (string, error) {
+func getBindInterface(r *networkplugin.CreateNetworkRequest) (string, error) {
 	if r.Options != nil {
 		if mode, ok := r.Options[bindInterfaceOption].(string); ok {
 			return mode, nil
@@ -319,4 +381,13 @@ func getBindInterface(r *dknet.CreateNetworkRequest) (string, error) {
 	}
 	// As bind interface is optional and has no default, don't return an error
 	return "", nil
+}
+func getBridgeNamefromresource(r *dockerclient.NetworkResource) (string, error) {
+	bridgeName := bridgePrefix + truncateID(r.ID)
+	if r.Options != nil {
+		if name, ok := r.Options[bridgeNameOption]; ok {
+			bridgeName = name
+		}
+	}
+	return bridgeName, nil
 }

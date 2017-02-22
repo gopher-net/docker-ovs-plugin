@@ -5,12 +5,12 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/codegangsta/cli"
-	"github.com/gopher-net/dknet"
+	"github.com/docker/go-plugins-helpers/network"
 	"github.com/gopher-net/docker-ovs-plugin/ovs"
 )
 
 const (
-	version = "0.2"
+	version = "0.3"
 )
 
 func main() {
@@ -40,6 +40,6 @@ func Run(ctx *cli.Context) {
 	if err != nil {
 		panic(err)
 	}
-	h := dknet.NewHandler(d)
-	h.ServeUnix("root", "ovs")
+	h := network.NewHandler(d)
+	h.ServeUnix(ovs.DriverName, 0)
 }
