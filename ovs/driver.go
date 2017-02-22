@@ -9,7 +9,7 @@ import (
 	networkplugin "github.com/docker/go-plugins-helpers/network"
 	"github.com/samalba/dockerclient"
 	"github.com/socketplane/libovsdb"
-	"github.com/vishvananda/netlink"	 
+	"github.com/vishvananda/netlink"
 )
 
 const (
@@ -237,7 +237,7 @@ func NewDriver() (*Driver, error) {
 		if err == nil {
 			break
 		}
-		log.Errorf("could not connect to openvswitch on port [ %d ]: %s. Retrying in 5 seconds", ovsdbPort, err)
+		log.Errorf("could not connect to openvswitch : %s. Retrying in 5 seconds", err)
 		time.Sleep(5 * time.Second)
 	}
 
@@ -273,7 +273,7 @@ func NewDriver() (*Driver, error) {
 				BridgeName:        bridgeName,
 			}
 			d.networks[net.ID] = ns
-			log.Debugf("exist network by this driver:%v",netInspect.Name)
+			log.Debugf("exist network create by this driver:%v",netInspect.Name)
 		}
 	}
 	// Initialize ovsdb cache at rpc connection setup
