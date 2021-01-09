@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -21,9 +22,19 @@ const (
 var (
 	quit         chan bool
 	update       chan *libovsdb.TableUpdates
-	ovsdbCache   map[string]map[string]libovsdb.Row
-	contextCache map[string]string
+	ovsdbCache   *dbCache
+	contextCache *ctxCache
 )
+
+type dbCache struct {
+	sync.Mutex
+	cache map[string]map[string]libovsdb.Row
+}
+
+type ctxCache struct {
+	sync.Mutex
+	cache map[string]string
+}
 
 type ovsdber struct {
 	ovsdb *libovsdb.OvsdbClient
@@ -48,7 +59,12 @@ func (o OvsdbNotifier) Echo([]interface{}) {
 func (ovsdber *ovsdber) initDBCache() {
 	quit = make(chan bool)
 	update = make(chan *libovsdb.TableUpdates)
-	ovsdbCache = make(map[string]map[string]libovsdb.Row)
+	ovsdbCache = &dbCache{
+		cache: make(map[string]map[string]libovsdb.Row),
+	}
+	contextCache = &ctxCache{
+		cache: make(map[string]string),
+	}
 
 	// Register for ovsdb table notifications
 	var notifier OvsdbNotifier
@@ -59,7 +75,6 @@ func (ovsdber *ovsdber) initDBCache() {
 		log.Errorf("Error populating initial OVSDB cache: %s", err)
 	}
 	populateCache(*initCache)
-	contextCache = make(map[string]string)
 	populateContextCache(ovsdber.ovsdb)
 
 	// async monitoring of the ovs bridge(s) for table updates
@@ -73,22 +88,19 @@ func populateContextCache(ovs *libovsdb.OvsdbClient) {
 	if ovs == nil {
 		return
 	}
-	tableCache := getTableCache("Interface")
-	for _, row := range tableCache {
-		config, ok := row.Fields["other_config"]
-		ovsMap := config.(libovsdb.OvsMap)
-		otherConfig := map[interface{}]interface{}(ovsMap.GoMap)
-		if ok {
-			containerID, ok := otherConfig[contextKey]
+	ovsdbCache.tableCache(`Interface`, func(tableCache map[string]libovsdb.Row) {
+		for _, row := range tableCache {
+			config, ok := row.Fields["other_config"]
+			ovsMap := config.(libovsdb.OvsMap)
+			otherConfig := map[interface{}]interface{}(ovsMap.GoMap)
 			if ok {
-				contextCache[containerID.(string)] = otherConfig[contextValue].(string)
+				containerID, ok := otherConfig[contextKey]
+				if ok {
+					contextCache.put(containerID.(string), otherConfig[contextValue].(string))
+				}
 			}
 		}
-	}
-}
-
-func getTableCache(tableName string) map[string]libovsdb.Row {
-	return ovsdbCache[tableName]
+	})
 }
 
 func (ovsdber *ovsdber) portExists(portName string) (bool, error) {
@@ -138,25 +150,81 @@ func (ovsdber *ovsdber) monitorBridges() {
 	}
 }
 
-func (ovsdber *ovsdber) getRootUUID() string {
-	for uuid := range ovsdbCache["Open_vSwitch"] {
-		return uuid
-	}
-	return ""
+func (ovsdber *ovsdber) getRootUUID() (r string) {
+	ovsdbCache.tableCache(`Open_vSwitch`, func(mp map[string]libovsdb.Row) {
+		for uuid := range mp {
+			r = uuid
+			return
+		}
+	})
+	return
 }
 
 func populateCache(updates libovsdb.TableUpdates) {
 	for table, tableUpdate := range updates.Updates {
-		if _, ok := ovsdbCache[table]; !ok {
-			ovsdbCache[table] = make(map[string]libovsdb.Row)
-		}
+		ovsdbCache.initTable(table)
 		for uuid, row := range tableUpdate.Rows {
 			empty := libovsdb.Row{}
 			if !reflect.DeepEqual(row.New, empty) {
-				ovsdbCache[table][uuid] = row.New
+				ovsdbCache.addTableRow(table, uuid, row.New)
 			} else {
-				delete(ovsdbCache[table], uuid)
+				ovsdbCache.deleteTableRow(table, uuid)
 			}
 		}
 	}
+}
+
+type rowfunc func(map[string]libovsdb.Row)
+
+func (dbc *dbCache) tableCache(table string, rf rowfunc) {
+	dbc.Lock()
+	rf(dbc.cache[table])
+	dbc.Unlock()
+}
+
+func (dbc *dbCache) initTable(key string) (added bool) {
+	dbc.Lock()
+	if _, ok := dbc.cache[key]; !ok {
+		dbc.cache[key] = make(map[string]libovsdb.Row)
+		added = true
+	}
+	dbc.Unlock()
+	return
+}
+
+func (dbc *dbCache) addTableRow(table, uuid string, row libovsdb.Row) {
+	dbc.Lock()
+	tbl, ok := dbc.cache[table]
+	if !ok {
+		tbl = make(map[string]libovsdb.Row)
+	}
+	tbl[uuid] = row
+	dbc.cache[table] = tbl
+	dbc.Unlock()
+}
+
+func (dbc *dbCache) deleteTableRow(table, uuid string) {
+	dbc.Lock()
+	if tbl, ok := dbc.cache[table]; ok {
+		delete(tbl, uuid)
+		dbc.cache[table] = tbl
+	}
+	dbc.Unlock()
+}
+
+func (c *ctxCache) get(k string) (r string) {
+	c.Lock()
+	if c != nil && c.cache != nil {
+		r = c.cache[k]
+	}
+	c.Unlock()
+	return ``
+}
+
+func (c *ctxCache) put(k, v string) {
+	c.Lock()
+	if c != nil && c.cache != nil {
+		c.cache[k] = v
+	}
+	c.Unlock()
 }

@@ -240,22 +240,23 @@ func (ovsdber *ovsdber) addOvsVethPort(bridgeName string, portName string, tag u
 	}
 	for i, o := range reply {
 		if o.Error != "" && i < len(operations) {
-			msg := fmt.Sprintf("Transaction Failed due to an error ]", o.Error, " details:", o.Details, " in ", operations[i])
-			return errors.New(msg)
+			return fmt.Errorf("Transaction Failed due to an error ] %v details: %v in %v", o.Error, o.Details, operations[i])
 		} else if o.Error != "" {
-			msg := fmt.Sprintf("Transaction Failed due to an error :", o.Error)
-			return errors.New(msg)
+			return fmt.Errorf("Transaction Failed due to an error: %v", o.Error)
 		}
 	}
 	return nil
 }
 
-func portUUIDForName(portName string) string {
-	portCache := ovsdbCache["Port"]
-	for key, val := range portCache {
-		if val.Fields["name"] == portName {
-			return key
+func portUUIDForName(portName string) (r string) {
+	ovsdbCache.tableCache(`Port`, func(portCache map[string]libovsdb.Row) {
+		for key, val := range portCache {
+			if val.Fields["name"] == portName {
+				r = key
+				break
+			}
 		}
-	}
-	return ""
+		return
+	})
+	return
 }
